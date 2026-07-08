@@ -12,6 +12,9 @@ FROM emscripten/emsdk:${EMSDK_VERSION}
 
 # - autoconf/automake/libtool/pkg-config: needed by the dependency build
 #   (ogg/vorbis/curl/harfbuzz autogen.sh / autoreconf).
+# - ragel: harfbuzz generates its OpenType shaper state machines
+#   (hb-ot-shaper-*-machine.hh) from .rl sources with ragel; the git checkout
+#   does not ship the pre-generated headers, so the build fails without it.
 # - imagemagick/vorbis-tools/pngquant/advancecomp/libjpeg-progs/optipng/gawk:
 #   used by the asset packing pipeline (android/generate_assets.sh +
 #   data/optimize_data.sh).
@@ -21,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         automake \
         libtool \
         pkg-config \
+        ragel \
         imagemagick \
         vorbis-tools \
         pngquant \
