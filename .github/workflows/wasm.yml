@@ -1,0 +1,112 @@
+name: WASM
+
+# Build the WebAssembly port in the same pinned Emscripten container that is
+# used locally (wasm/docker/Dockerfile), then deploy the static web root to
+# Cloudflare Pages.
+#
+# Deployment only happens on pushes to the wasm branch (or manual runs) and only
+# when the Cloudflare secrets are configured. Pull requests build but do not
+# deploy.
+#
+# Required repository secrets for deployment:
+#   CLOUDFLARE_API_TOKEN     API token with "Cloudflare Pages: Edit" permission.
+#   CLOUDFLARE_ACCOUNT_ID    The Cloudflare account id.
+# Optional repository variable:
+#   CLOUDFLARE_PAGES_PROJECT Pages project name (default: supertuxkart-wasm).
+
+on:
+  push:
+    branches: [wasm]
+  pull_request:
+    branches: [wasm]
+  workflow_dispatch:
+
+concurrency:
+  group: wasm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      IMAGE: stk-wasm-build:ci
+      # Mapped to env so the deploy step's `if` can check whether the Cloudflare
+      # credentials are configured (the `secrets` context is not allowed in `if`).
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the Emscripten build image
+        uses: docker/build-push-action@v6
+        with:
+          context: wasm/docker
+          file: wasm/docker/Dockerfile
+          tags: ${{ env.IMAGE }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Cross-compiled dependencies (wasm/prefix) and their sources (wasm/build)
+      # are expensive to build, so cache them across runs.
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            wasm/prefix
+            wasm/build
+          key: wasm-deps-${{ hashFiles('wasm/build_deps.sh', 'wasm/docker/Dockerfile') }}
+
+      # The external art assets change rarely; keep the checkout warm and just
+      # svn-update it on later runs.
+      - name: Cache stk-assets
+        uses: actions/cache@v4
+        with:
+          path: wasm/stk-assets
+          key: stk-assets-${{ github.run_id }}
+          restore-keys: |
+            stk-assets-
+
+      - name: Fetch stk-assets
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$PWD":/src -w /src \
+            "$IMAGE" wasm/get_assets.sh wasm/stk-assets
+
+      - name: Build wasm and pack assets
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$PWD":/src -w /src \
+            -e BUILD_TYPE=Release \
+            -e STK_ASSETS_DIR=/src/wasm/stk-assets \
+            "$IMAGE" wasm/docker/pipeline.sh
+
+      - name: Upload web root artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stk-wasm-web
+          path: wasm/web
+          if-no-files-found: error
+
+      - name: Deploy to Cloudflare Pages
+        if: >-
+          github.event_name != 'pull_request' &&
+          env.CLOUDFLARE_API_TOKEN != '' &&
+          env.CLOUDFLARE_ACCOUNT_ID != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy wasm/web
+            --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'supertuxkart-wasm' }}
