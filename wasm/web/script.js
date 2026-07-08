@@ -1,5 +1,7 @@
-import pako from "https://cdn.jsdelivr.net/npm/pako@2.1.0/+esm";
-import jsUntar from "https://cdn.jsdelivr.net/npm/js-untar@2.0.0/+esm";
+import pako from "/vendor/pako.esm.js";
+import jsUntar from "/vendor/js-untar.esm.js";
+import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
+import { init_discord_activity } from "/discord-activity.js";
 
 let db = null;
 let db_name = "stk_db";
@@ -14,6 +16,12 @@ let quality_select = document.getElementById("quality_select");
 
 let syncing_fs = false;
 let config = {};
+let create_discord_sdk = (client_id) => new DiscordSDK(client_id);
+
+function set_config(next_config) {
+  config = next_config;
+  globalThis.config = config;
+}
 
 function load_db() {
   if (db) return db;
@@ -216,13 +224,24 @@ function set_websocket_url(url) {
 
 async function load_config() {
   let response = await fetch("/config.json");
-  config = await response.json();
-  globalThis.config = config;
+  set_config(await response.json());
+}
+
+async function init_discord() {
+  await init_discord_activity({
+    config,
+    search: window.location.search,
+    create_discord_sdk,
+    fetch_impl: fetch,
+    logger: console,
+    global_scope: globalThis,
+  });
 }
 
 async function main() {
   globalThis.ready = true;
   await load_config();
+  await init_discord();
   await load_idbfs();
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);

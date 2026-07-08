@@ -94,3 +94,11 @@ wasm/pack_assets.sh ../stk-assets
 - /wasm/web - Web server root directory
 - /wasm/emsdk - Emscripten SDK
 - /wasm/fragments - Patches for emscripten's generated JS
+
+## Discord Activity
+
+- The browser dependencies used by `wasm/web/script.js` are vendored under `wasm/web/vendor`, so the web build no longer depends on third-party CDNs.
+- Set `discord_client_id` in `wasm/web/config.json` to enable Discord Activity OAuth for the embedded build.
+- Configure `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` as Cloudflare Pages environment variables/secrets so the `/api/token` Pages Function can exchange the Discord authorization code server-side.
+- The Discord Activity flow is single-player only for now; networking remains TODO.
+- `SharedArrayBuffer` / cross-origin isolation is still being tried via the existing `wasm/web/_headers` COOP/COEP settings.
