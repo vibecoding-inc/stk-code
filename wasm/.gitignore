@@ -1,5 +1,7 @@
 /build/
 /prefix/
-/emsdk/
+/emsdk
+/stk-assets
+/.emcache
 /web/game
 /web/config.json
