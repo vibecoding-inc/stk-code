@@ -17,7 +17,10 @@ cd $BUILD_DIR
 
 source "$EMSDK_DIR/emsdk_env.sh"
 embuilder build sdl2 sdl2_ttf sdl2_image sdl2_image_jpg sdl2_image_png
-emcmake cmake "$SRC_DIR" -DNO_SHADERC=on -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+# CHECK_ASSETS is disabled because the web build ships its assets separately
+# (packed by pack_assets.sh), so the sibling stk-assets/ checkout the upstream
+# check expects is not required here.
+emcmake cmake "$SRC_DIR" -DNO_SHADERC=on -DCHECK_ASSETS=off -DCMAKE_BUILD_TYPE=$BUILD_TYPE
 make -j$CORE_COUNT
 
 echo "copying wasm files"
