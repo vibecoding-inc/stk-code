@@ -12,8 +12,11 @@
 #     emscripten/emsdk base image).
 #
 # Environment variables:
-#   BUILD_TYPE       CMake build type, defaults to Release.
-#   STK_ASSETS_DIR   If set, the game assets in this directory are packed too.
+#   BUILD_TYPE            CMake build type, defaults to Release.
+#   STK_ASSETS_DIR        If set, the game assets in this directory are packed too.
+#   SKIP_PACK_IF_PRESENT  If set and the packed asset bundles already exist
+#                         (e.g. restored from a CI cache), skip the expensive
+#                         asset packing step.
 #
 set -euo pipefail
 set -x
@@ -29,6 +32,17 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 # container HOME may be unset or read-only when running as an arbitrary uid.
 export HOME="${HOME_DIR:-/tmp/stk-build-home}"
 mkdir -p "$HOME"
+
+# Relocate the compiler caches into the (mounted, cacheable) repository so that
+# both local and CI builds reuse them across runs. These directories are what
+# make repeated builds fast:
+#   - CCACHE_DIR  object-file cache for SuperTuxKart's C/C++ sources.
+#   - EM_CACHE    Emscripten's compiled system libraries and ports (SDL2, ...),
+#                 which are otherwise rebuilt from scratch on every fresh run.
+export CCACHE_DIR="${CCACHE_DIR:-$WASM_DIR/.ccache}"
+export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-2G}"
+export EM_CACHE="${EM_CACHE:-$WASM_DIR/.emcache}"
+mkdir -p "$CCACHE_DIR" "$EM_CACHE"
 
 # Expose the preinstalled SDK where the existing build scripts and CMakeLists.txt
 # expect it (wasm/emsdk). This keeps the toolchain scripts identical between the
@@ -48,7 +62,19 @@ if [ ! -f "$WASM_DIR/web/config.json" ]; then
     cp "$WASM_DIR/web/config_example.json" "$WASM_DIR/web/config.json"
 fi
 
-# 4. Optionally pack the game assets into the low/mid/high bundles.
+# 4. Optionally pack the game assets into the low/mid/high bundles. Packing is
+#    slow (it re-encodes every texture/audio file at three quality levels), so
+#    it is skipped when the bundles are already present and SKIP_PACK_IF_PRESENT
+#    is set - in CI the bundles are restored from a cache keyed on the assets
+#    revision, so this only re-runs when the assets or the packing scripts change.
+GAME_DIR="$WASM_DIR/web/game"
 if [ -n "${STK_ASSETS_DIR:-}" ]; then
-    "$WASM_DIR/pack_assets.sh" "$STK_ASSETS_DIR"
+    if [ -n "${SKIP_PACK_IF_PRESENT:-}" ] \
+        && [ -f "$GAME_DIR/data_low.tar.gz.manifest" ] \
+        && [ -f "$GAME_DIR/data_mid.tar.gz.manifest" ] \
+        && [ -f "$GAME_DIR/data_high.tar.gz.manifest" ]; then
+        echo "Packed asset bundles already present; skipping asset packing."
+    else
+        "$WASM_DIR/pack_assets.sh" "$STK_ASSETS_DIR"
+    fi
 fi

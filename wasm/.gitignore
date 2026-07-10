@@ -2,6 +2,7 @@
 /prefix/
 /emsdk
 /stk-assets
+/.ccache
 /.emcache
 /web/game
 /web/config.json

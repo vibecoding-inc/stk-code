@@ -19,12 +19,17 @@ FROM emscripten/emsdk:${EMSDK_VERSION}
 #   used by the asset packing pipeline (android/generate_assets.sh +
 #   data/optimize_data.sh).
 # - subversion: used to fetch the external stk-assets repository.
+# - ccache: caches C/C++ object files so recompiling SuperTuxKart (the dominant
+#   cost of the build) is near-instant when the sources have not changed. Its
+#   cache directory is kept warm across runs (see wasm/docker/pipeline.sh and
+#   the CI workflow).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         autoconf \
         automake \
         libtool \
         pkg-config \
         ragel \
+        ccache \
         imagemagick \
         vorbis-tools \
         pngquant \

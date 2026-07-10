@@ -35,8 +35,12 @@ pinned image (`wasm/docker/Dockerfile`, based on `emscripten/emsdk`).
    ```
    wasm/docker/build.sh Release wasm/stk-assets
    ```
-   The image is built on first use and cached; `wasm/prefix` and `wasm/build`
-   hold the cached dependencies so subsequent runs are fast.
+   The image is built on first use and cached. Several directories persist
+   between runs so subsequent builds are fast: `wasm/prefix`/`wasm/build` hold
+   the cross-compiled dependencies, `wasm/.ccache` caches the compiled C/C++
+   object files (via ccache), and `wasm/.emcache` caches Emscripten's system
+   libraries and ports. Change only a few source files and the rebuild only
+   recompiles those files.
 3. Serve the result locally:
    ```
    (cd wasm/web && python3 ../run_server.py)
@@ -58,6 +62,26 @@ Pages. Configure these repository secrets to enable deployment:
 Optionally set the `CLOUDFLARE_PAGES_PROJECT` repository variable to override the
 Pages project name (default: `supertuxkart-wasm`). Without the secrets the
 workflow still builds and uploads the artifact but skips the deploy.
+
+### Caching
+
+The first run is slow (~1.5 h) because everything is built from scratch; later
+runs reuse several `actions/cache` entries and are much faster:
+
+- **Dependencies** (`wasm/prefix`) — keyed on `build_deps.sh` + the Dockerfile,
+  so the cross-compiled libraries are rebuilt only when those change.
+- **Compiler caches** (`wasm/.ccache` + `wasm/.emcache`) — updated every run;
+  ccache makes recompiling STK only touch the sources that actually changed.
+- **Packed assets** (`wasm/web/game/data_{low,mid,high}.tar.gz.*`) — keyed on the
+  `stk-assets` svn revision and the packing scripts. On a hit the (slow) asset
+  re-encoding is skipped entirely (`SKIP_PACK_IF_PRESENT`); it only re-runs when
+  the art or the packing scripts change.
+- **stk-assets checkout** (`wasm/stk-assets`) — kept warm so it is only
+  `svn update`d, never re-downloaded in full.
+
+So a typical code-only change rebuilds in a fraction of the initial time: no
+dependency rebuild, an incremental ccache-assisted compile, and no asset
+repacking.
 
 > Note: Cloudflare Pages rejects individual files larger than 25 MiB. The asset
 > bundles are split into 20 MB chunks, but keep an eye on `supertuxkart.wasm`; if

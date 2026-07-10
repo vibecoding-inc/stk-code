@@ -17,10 +17,20 @@ cd $BUILD_DIR
 
 source "$EMSDK_DIR/emsdk_env.sh"
 embuilder build sdl2 sdl2_ttf sdl2_image sdl2_image_jpg sdl2_image_png
+
+# Route the compilers through ccache when it is available so unchanged
+# translation units are not recompiled. A full STK compile is the dominant cost
+# of the build, so with a warm ccache (kept across CI runs) an incremental
+# rebuild only recompiles the files that actually changed.
+CCACHE_ARGS=""
+if command -v ccache >/dev/null 2>&1; then
+  CCACHE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+fi
+
 # CHECK_ASSETS is disabled because the web build ships its assets separately
 # (packed by pack_assets.sh), so the sibling stk-assets/ checkout the upstream
 # check expects is not required here.
-emcmake cmake "$SRC_DIR" -DNO_SHADERC=on -DCHECK_ASSETS=off -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+emcmake cmake "$SRC_DIR" -DNO_SHADERC=on -DCHECK_ASSETS=off -DCMAKE_BUILD_TYPE=$BUILD_TYPE $CCACHE_ARGS
 make -j$CORE_COUNT
 
 echo "copying wasm files"
