@@ -112,7 +112,16 @@ if(EMSCRIPTEN)
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -pthread")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -pthread")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
+
+    # Run main() (and the whole game loop) on a dedicated pthread instead of the
+    # browser's main thread. STK's start-up spawns worker threads (e.g. the SP
+    # texture-loader pool) and then busy-waits on them (checkForGLCommand). On the
+    # web, Workers cannot boot while the main browser thread is stuck inside
+    # Wasm/JS, so that blocking wait deadlocks the event loop and the renderer
+    # init aborts ("Couldn't initialise irrlicht device"). PROXY_TO_PTHREAD frees
+    # the browser main thread to service pthread_create and events, and the canvas
+    # is handed to the game thread as an OffscreenCanvas so GL runs there too.
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sPROXY_TO_PTHREAD -sOFFSCREENCANVAS_SUPPORT=1 -sOFFSCREENCANVASES_TO_PTHREAD=#canvas -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
 
     if(CMAKE_BUILD_TYPE MATCHES Debug)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --profiling")

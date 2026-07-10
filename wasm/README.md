@@ -18,6 +18,21 @@ Caveats:
 - The performance isn't great, probably because the legacy renderer is still being used
 - Some options, like anything related to online multiplayer, may hang the game
 
+### Threading / rendering
+
+The game is linked with `-sPROXY_TO_PTHREAD` so `main()` and the whole game
+loop run on a dedicated pthread (Web Worker) rather than the browser's main
+thread. This is required because STK's start-up spawns worker threads (e.g. the
+SP texture-loader pool) and then busy-waits on them; on the web a Worker cannot
+start while the main browser thread is stuck inside Wasm, so running the game on
+the main thread deadlocked the event loop and the renderer aborted with
+`Couldn't initialise irrlicht device`. The `#canvas` element is handed to the
+game thread as an `OffscreenCanvas` (`-sOFFSCREENCANVAS_SUPPORT=1
+-sOFFSCREENCANVASES_TO_PTHREAD=#canvas`) so GL runs on that thread too. This
+relies on the COOP/COEP cross-origin-isolation headers in `wasm/web/_headers`
+(needed for `SharedArrayBuffer`) and on browser support for transferring an
+`OffscreenCanvas` to a worker.
+
 ## Building with Docker (recommended)
 
 This is the reproducible path used both locally and in CI. It only requires
