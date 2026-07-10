@@ -1,0 +1,7 @@
+# Files in this directory that must NOT be uploaded as public static assets when
+# deploying the Worker (see wasm/wrangler.jsonc). The _headers file is
+# intentionally NOT listed here: Workers Static Assets parses it to apply the
+# COOP/COEP cross-origin-isolation headers (it is not served as a file itself).
+package.json
+config_example.json
+tests

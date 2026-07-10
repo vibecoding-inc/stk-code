@@ -2,17 +2,17 @@ name: WASM
 
 # Build the WebAssembly port in the same pinned Emscripten container that is
 # used locally (wasm/docker/Dockerfile), then deploy the static web root to
-# Cloudflare Pages.
+# Cloudflare Workers (static assets + a small Worker for the /api/token route,
+# configured in wasm/wrangler.jsonc). It is published on the project's own
+# workers.dev subdomain.
 #
 # Deployment only happens on pushes to the wasm branch (or manual runs) and only
 # when the Cloudflare secrets are configured. Pull requests build but do not
 # deploy.
 #
 # Required repository secrets for deployment:
-#   CLOUDFLARE_API_TOKEN     API token with "Cloudflare Pages: Edit" permission.
+#   CLOUDFLARE_API_TOKEN     API token with the "Edit Cloudflare Workers" permission.
 #   CLOUDFLARE_ACCOUNT_ID    The Cloudflare account id.
-# Optional repository variable:
-#   CLOUDFLARE_PAGES_PROJECT Pages project name (default: supertuxkart-wasm).
 
 on:
   push:
@@ -134,7 +134,7 @@ jobs:
           path: wasm/web
           if-no-files-found: error
 
-      - name: Deploy to Cloudflare Pages
+      - name: Deploy to Cloudflare Workers
         if: >-
           github.event_name != 'pull_request' &&
           env.CLOUDFLARE_API_TOKEN != '' &&
@@ -146,6 +146,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: >-
-            pages deploy wasm/web
-            --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'supertuxkart-wasm' }}
+          workingDirectory: wasm
+          command: deploy

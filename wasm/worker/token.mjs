@@ -1,5 +1,14 @@
-// Configure DISCORD_CLIENT_ID as a Cloudflare Pages environment variable and
-// DISCORD_CLIENT_SECRET as a Cloudflare Pages secret for this token exchange.
+// Discord OAuth2 authorization-code -> access-token exchange, performed
+// server-side inside the Worker so the client secret never reaches the browser.
+//
+// This used to be a Cloudflare Pages Function (wasm/web/functions/api/token.js);
+// after migrating to Cloudflare Workers it is a plain handler invoked from the
+// Worker entry point (worker/index.mjs) for POST /api/token.
+//
+// Configure these as Worker secrets/vars (e.g. `wrangler secret put ...` or in
+// the Cloudflare dashboard) - they must NOT be committed:
+//   DISCORD_CLIENT_ID      the Discord application (client) id.
+//   DISCORD_CLIENT_SECRET  the Discord application client secret.
 
 function json_response(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -8,7 +17,7 @@ function json_response(body, status = 200) {
   });
 }
 
-export async function onRequestPost({request, env}) {
+export async function handleTokenExchange({request, env}) {
   let payload;
   try {
     payload = await request.json();

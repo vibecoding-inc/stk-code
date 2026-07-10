@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { onRequestPost } from "../functions/api/token.js";
+import { handleTokenExchange } from "../../worker/token.mjs";
 
-test("onRequestPost exchanges a Discord authorization code", {concurrency: false}, async () => {
+test("handleTokenExchange exchanges a Discord authorization code", {concurrency: false}, async () => {
   let original_fetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     assert.equal(url, "https://discord.com/api/oauth2/token");
@@ -25,7 +25,7 @@ test("onRequestPost exchanges a Discord authorization code", {concurrency: false
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({code: "auth-code"}),
     });
-    let response = await onRequestPost({
+    let response = await handleTokenExchange({
       request,
       env: {
         DISCORD_CLIENT_ID: "client-id",
@@ -41,13 +41,13 @@ test("onRequestPost exchanges a Discord authorization code", {concurrency: false
   }
 });
 
-test("onRequestPost rejects a missing authorization code", {concurrency: false}, async () => {
+test("handleTokenExchange rejects a missing authorization code", {concurrency: false}, async () => {
   let request = new Request("https://example.com/api/token", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({}),
   });
-  let response = await onRequestPost({
+  let response = await handleTokenExchange({
     request,
     env: {
       DISCORD_CLIENT_ID: "client-id",
@@ -59,7 +59,7 @@ test("onRequestPost rejects a missing authorization code", {concurrency: false},
   assert.deepEqual(await response.json(), {error: "Missing authorization code."});
 });
 
-test("onRequestPost returns Discord errors", {concurrency: false}, async () => {
+test("handleTokenExchange returns Discord errors", {concurrency: false}, async () => {
   let original_fetch = globalThis.fetch;
   globalThis.fetch = async () => {
     return Response.json({error: "invalid_grant"}, {status: 400});
@@ -71,7 +71,7 @@ test("onRequestPost returns Discord errors", {concurrency: false}, async () => {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({code: "bad-code"}),
     });
-    let response = await onRequestPost({
+    let response = await handleTokenExchange({
       request,
       env: {
         DISCORD_CLIENT_ID: "client-id",

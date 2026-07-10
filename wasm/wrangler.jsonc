@@ -1,0 +1,25 @@
+{
+  // Cloudflare Workers configuration for the SuperTuxKart WebAssembly web build.
+  //
+  // This replaces the deprecated Cloudflare Pages deployment. The build output
+  // in ./web is served as static assets (with the _headers file applying the
+  // COOP/COEP cross-origin-isolation headers), and ./worker/index.mjs handles
+  // the single dynamic route (POST /api/token, the Discord OAuth2 exchange).
+  //
+  // Deploy with `wrangler deploy` (run from this directory). The Discord OAuth
+  // secrets are configured out-of-band and must not be committed:
+  //   wrangler secret put DISCORD_CLIENT_ID
+  //   wrangler secret put DISCORD_CLIENT_SECRET
+  "name": "supertuxkart-wasm",
+  "main": "worker/index.mjs",
+  "compatibility_date": "2025-06-05",
+
+  // Serve on the free https://<name>.<account-subdomain>.workers.dev domain for
+  // now (no custom domain / route configured yet).
+  "workers_dev": true,
+
+  "assets": {
+    "directory": "./web",
+    "binding": "ASSETS"
+  }
+}

@@ -54,14 +54,43 @@ You can pin a different Emscripten version with the `EMSDK_VERSION` build arg
 `.github/workflows/wasm.yml` builds the same container, cross-compiles the
 dependencies, builds the wasm binary, packs the assets, uploads the `wasm/web`
 directory as an artifact and (on pushes to `wasm`) deploys it to Cloudflare
-Pages. Configure these repository secrets to enable deployment:
+Workers with `wrangler deploy` (see `wasm/wrangler.jsonc`). Configure these
+repository secrets to enable deployment:
 
-- `CLOUDFLARE_API_TOKEN` — token with the *Cloudflare Pages: Edit* permission.
+- `CLOUDFLARE_API_TOKEN` — token with the *Edit Cloudflare Workers* permission.
 - `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account id.
 
-Optionally set the `CLOUDFLARE_PAGES_PROJECT` repository variable to override the
-Pages project name (default: `supertuxkart-wasm`). Without the secrets the
-workflow still builds and uploads the artifact but skips the deploy.
+Without the secrets the workflow still builds and uploads the artifact but skips
+the deploy.
+
+### Deployment (Cloudflare Workers)
+
+The web build is deployed as a Cloudflare Worker with static assets, configured
+in `wasm/wrangler.jsonc`:
+
+- The built web root (`wasm/web`) is served as static assets; the `_headers`
+  file there still applies the COOP/COEP cross-origin-isolation headers (Workers
+  Static Assets parses `_headers`, it is not served as a file).
+- `wasm/worker/index.mjs` is the Worker entry point. Static requests are served
+  directly; only the single dynamic route `POST /api/token` (the Discord OAuth2
+  code→token exchange, formerly a Pages Function) runs in the Worker.
+- It is published on its own `workers.dev` subdomain (`workers_dev: true`,
+  Worker name `supertuxkart-wasm`), i.e.
+  `https://supertuxkart-wasm.<your-subdomain>.workers.dev`.
+
+To deploy manually (Wrangler v4):
+
+```
+cd wasm && npx wrangler deploy
+```
+
+The Discord OAuth secrets used by `/api/token` are Worker secrets (not committed):
+
+```
+cd wasm
+npx wrangler secret put DISCORD_CLIENT_ID
+npx wrangler secret put DISCORD_CLIENT_SECRET
+```
 
 ### Caching
 
@@ -83,9 +112,10 @@ So a typical code-only change rebuilds in a fraction of the initial time: no
 dependency rebuild, an incremental ccache-assisted compile, and no asset
 repacking.
 
-> Note: Cloudflare Pages rejects individual files larger than 25 MiB. The asset
-> bundles are split into 20 MB chunks, but keep an eye on `supertuxkart.wasm`; if
-> it grows past the limit it must be served from R2 or split instead.
+> Note: Cloudflare Workers Static Assets reject individual files larger than
+> 25 MiB. The asset bundles are split into 20 MB chunks, but keep an eye on
+> `supertuxkart.wasm`; if it grows past the limit it must be served from R2 or
+> split instead.
 
 ## Building manually (native toolchain)
 1. First, get a copy of the emsdk (it might help to have emscripten already installed with `sudo apt install emscripten`):
@@ -115,7 +145,9 @@ wasm/pack_assets.sh ../stk-assets
 - /wasm/build - Files for building the dependencies
 - /wasm/prefix - Headers and library files
 - /wasm/stk-assets - Checkout of the external art assets (gitignored)
-- /wasm/web - Web server root directory
+- /wasm/web - Web server root directory (deployed as Workers static assets)
+- /wasm/worker - Cloudflare Worker entry point and the /api/token handler
+- /wasm/wrangler.jsonc - Cloudflare Workers deploy configuration
 - /wasm/emsdk - Emscripten SDK
 - /wasm/fragments - Patches for emscripten's generated JS
 
@@ -123,6 +155,6 @@ wasm/pack_assets.sh ../stk-assets
 
 - The browser dependencies used by `wasm/web/script.js` are vendored under `wasm/web/vendor`, so the web build no longer depends on third-party CDNs.
 - Set `discord_client_id` in `wasm/web/config.json` to enable Discord Activity OAuth for the embedded build.
-- Configure `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` as Cloudflare Pages environment variables/secrets so the `/api/token` Pages Function can exchange the Discord authorization code server-side.
+- Configure `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` as Cloudflare Worker secrets (`wrangler secret put ...`) so the `/api/token` Worker route can exchange the Discord authorization code server-side.
 - The Discord Activity flow is single-player only for now; networking remains TODO.
 - `SharedArrayBuffer` / cross-origin isolation is still being tried via the existing `wasm/web/_headers` COOP/COEP settings.
