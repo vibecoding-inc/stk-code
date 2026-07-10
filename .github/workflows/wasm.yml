@@ -37,13 +37,13 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build the Emscripten build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: wasm/docker
           file: wasm/docker/Dockerfile
@@ -55,7 +55,7 @@ jobs:
       # Cross-compiled dependencies (wasm/prefix) and their sources (wasm/build)
       # are expensive to build, so cache them across runs.
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             wasm/prefix
@@ -65,7 +65,7 @@ jobs:
       # The external art assets change rarely; keep the checkout warm and just
       # svn-update it on later runs.
       - name: Cache stk-assets
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: wasm/stk-assets
           key: stk-assets-${{ github.run_id }}
@@ -89,7 +89,7 @@ jobs:
             "$IMAGE" wasm/docker/pipeline.sh
 
       - name: Upload web root artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: stk-wasm-web
           path: wasm/web
