@@ -17,7 +17,7 @@ jobs:
       image: 'devkitpro/devkita64'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # We need 0 so we get all commits for mtime!
           fetch-depth: 0
