@@ -64,14 +64,22 @@ if(EMSCRIPTEN)
 
     set(CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/wasm/prefix/")
 
-    set(JPEG_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include")
-    set(JPEG_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libjpeg.a")
+    # These are consumed by CMake's builtin FindJPEG/FindPNG/FindZLIB modules,
+    # which call find_path() for the include dir. Under the Emscripten toolchain
+    # find_path only searches the sysroot (CMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY),
+    # which does not contain jpeglib.h, so a plain (non-cache) variable gets
+    # dropped as soon as find_package() is re-invoked in a subdirectory
+    # (e.g. lib/irrlicht), breaking the build with "missing JPEG_INCLUDE_DIR".
+    # Storing them in the cache makes find_path() reuse the value instead of
+    # re-searching, so the cross-compiled prefix is honoured consistently.
+    set(JPEG_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include" CACHE PATH "" FORCE)
+    set(JPEG_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libjpeg.a" CACHE FILEPATH "" FORCE)
 
-    set(PNG_PNG_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include/")
-    set(PNG_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libpng16.a")
+    set(PNG_PNG_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include/" CACHE PATH "" FORCE)
+    set(PNG_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libpng16.a" CACHE FILEPATH "" FORCE)
 
-    set(ZLIB_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include")
-    set(ZLIB_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libz.a")
+    set(ZLIB_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include" CACHE PATH "" FORCE)
+    set(ZLIB_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libz.a" CACHE FILEPATH "" FORCE)
 
     set(HARFBUZZ_INCLUDEDIR "${CMAKE_SOURCE_DIR}/wasm/prefix/include/")
     set(HARFBUZZ_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libharfbuzz.a")
