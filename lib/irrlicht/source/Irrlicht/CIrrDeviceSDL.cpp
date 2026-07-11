@@ -511,6 +511,15 @@ bool CIrrDeviceSDL::createWindow()
 		if (!Window || !Context)
 		{
 			os::Printer::log( "Could not initialize display!" );
+#ifdef __EMSCRIPTEN__
+			// Diagnostics for the web build: report which step failed and the
+			// underlying SDL error, so the real cause of the persistent GLES2
+			// context-creation failure can be identified from the browser log.
+			os::Printer::log(!Window
+				? "Emscripten: no SDL window was created"
+				: "Emscripten: SDL window created but GL context is NULL",
+				SDL_GetError(), ELL_ERROR);
+#endif
 			return false;
 		}
 #ifndef __EMSCRIPTEN__
@@ -691,11 +700,32 @@ legacy:
 		(float)CreationParams.WindowPosition.Y,
 		(float)CreationParams.WindowSize.Width,
 		(float)CreationParams.WindowSize.Height, flags);
+#ifdef __EMSCRIPTEN__
+	// Web build diagnostics: this legacy GLES2 path is the only one taken on
+	// Emscripten, so log exactly why window/context creation fails here.
+	if (!Window)
+		os::Printer::log("Emscripten: legacy SDL_CreateWindow failed",
+			SDL_GetError(), ELL_ERROR);
+#endif
 	if (Window)
 	{
 		Context = SDL_GL_CreateContext(Window);
+#ifdef __EMSCRIPTEN__
+		if (!Context)
+			os::Printer::log("Emscripten: legacy SDL_GL_CreateContext failed",
+				SDL_GetError(), ELL_ERROR);
+#endif
 #ifdef _IRR_COMPILE_WITH_OGLES2_
-		if (Context && gladLoadGLES2((GLADloadfunc)SDL_GL_GetProcAddress) != 0) return;
+		if (Context)
+		{
+			int glad_ret = gladLoadGLES2((GLADloadfunc)SDL_GL_GetProcAddress);
+#ifdef __EMSCRIPTEN__
+			if (glad_ret == 0)
+				os::Printer::log("Emscripten: gladLoadGLES2 failed to load "
+					"GLES2 entry points from the new context", ELL_ERROR);
+#endif
+			if (glad_ret != 0) return;
+		}
 #else
 		if (Context && gladLoadGL((GLADloadfunc)SDL_GL_GetProcAddress) != 0) return;
 #endif

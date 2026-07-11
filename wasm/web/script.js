@@ -269,6 +269,13 @@ async function start_game() {
 }
 
 Module["canvas"] = document.getElementById("canvas")
+// Diagnostics: if WebGL context creation is ever attempted on the canvas and
+// the browser rejects it, log the reason. If this never fires while the game
+// still reports "Could not initialize display!", it means getContext was never
+// called (i.e. SDL_CreateWindow failed before reaching context creation).
+Module["canvas"].addEventListener("webglcontextcreationerror", (e) => {
+  console.error("webglcontextcreationerror:", e.statusMessage);
+}, false);
 globalThis.main = main;
 globalThis.sync_idbfs = sync_idbfs;
 globalThis.load_idbfs = load_idbfs;
