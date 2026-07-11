@@ -160,14 +160,25 @@ change to the assets automatically invalidates every browser's cache — there i
 no constant to bump by hand. (If the file is ever absent, e.g. an older deploy,
 the front-end falls back to the previous hard-coded `data_version`.)
 
-`pack_assets.sh` also validates the packed tree before compressing it: for every
-model (`.spm`/`.b3d`) it checks that each texture the model references actually
-exists in the bundle. This catches the class of bug that shows up as **white /
-untextured item boxes** — e.g. a `.png` that was converted to `.jpg` (see
-`android/generate_assets.sh`, `CONVERT_TO_JPG`) but whose reference in the model
-was not updated. A dangling reference fails the pack instead of shipping a broken
-bundle. JPG conversion itself is kept on (it meaningfully shrinks the download);
-the validation just guarantees the references stay consistent with it.
+`pack_assets.sh` also runs an **advisory** validation over the packed tree before
+compressing it: for every model (`.spm`/`.b3d`) it checks that each referenced
+texture is present in the bundle. It surfaces the class of bug that shows up as
+**white / untextured item boxes** — e.g. a texture a model needs is missing
+entirely from the packed data. It is intentionally lenient in two ways:
+
+- It matches by **name stem**, not by exact extension. `android/generate_assets.sh`
+  (`CONVERT_TO_JPG`) converts most opaque `.png` textures to `.jpg` to shrink the
+  download and only rewrites the reference embedded in a model when the texture
+  lives in that model's own directory. Shared textures are therefore routinely
+  referenced as `foo.png` by a model while the packed file is `foo.jpg` — a
+  normal, working situation — so a reference to `foo.png` is treated as satisfied
+  when either `foo.png` or `foo.jpg` exists.
+- It only **warns**; it never aborts the pack. An exact-extension, build-failing
+  version of this check flagged hundreds of healthy models and blocked every
+  deploy, which caused far more harm than the bug it was meant to catch. Missing
+  textures are logged so they can be reviewed, but the (space-saving) JPG
+  conversion and the deploy are never blocked by this heuristic scan of binary
+  meshes.
 
 > Note: Cloudflare Workers Static Assets reject individual files larger than
 > 25 MiB. The asset bundles are split into 20 MB chunks, but keep an eye on
