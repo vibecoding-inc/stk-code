@@ -72,7 +72,8 @@ if [ -n "${STK_ASSETS_DIR:-}" ]; then
     if [ -n "${SKIP_PACK_IF_PRESENT:-}" ] \
         && [ -f "$GAME_DIR/data_low.tar.gz.manifest" ] \
         && [ -f "$GAME_DIR/data_mid.tar.gz.manifest" ] \
-        && [ -f "$GAME_DIR/data_high.tar.gz.manifest" ]; then
+        && [ -f "$GAME_DIR/data_high.tar.gz.manifest" ] \
+        && [ -f "$GAME_DIR/data_version.txt" ]; then
         echo "Packed asset bundles already present; skipping asset packing."
     else
         "$WASM_DIR/pack_assets.sh" "$STK_ASSETS_DIR"

@@ -115,6 +115,7 @@ jobs:
             wasm/web/game/data_low.tar.gz.*
             wasm/web/game/data_mid.tar.gz.*
             wasm/web/game/data_high.tar.gz.*
+            wasm/web/game/data_version.txt
           key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh') }}
 
       - name: Build wasm and pack assets

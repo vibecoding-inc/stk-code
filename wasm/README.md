@@ -138,16 +138,36 @@ runs reuse several `actions/cache` entries and are much faster:
   so the cross-compiled libraries are rebuilt only when those change.
 - **Compiler caches** (`wasm/.ccache` + `wasm/.emcache`) — updated every run;
   ccache makes recompiling STK only touch the sources that actually changed.
-- **Packed assets** (`wasm/web/game/data_{low,mid,high}.tar.gz.*`) — keyed on the
-  `stk-assets` svn revision and the packing scripts. On a hit the (slow) asset
-  re-encoding is skipped entirely (`SKIP_PACK_IF_PRESENT`); it only re-runs when
-  the art or the packing scripts change.
+- **Packed assets** (`wasm/web/game/data_{low,mid,high}.tar.gz.*` and
+  `data_version.txt`) — keyed on the `stk-assets` svn revision and the packing
+  scripts. On a hit the (slow) asset re-encoding is skipped entirely
+  (`SKIP_PACK_IF_PRESENT`); it only re-runs when the art or the packing scripts
+  change.
 - **stk-assets checkout** (`wasm/stk-assets`) — kept warm so it is only
   `svn update`d, never re-downloaded in full.
 
 So a typical code-only change rebuilds in a fraction of the initial time: no
 dependency rebuild, an incremental ccache-assisted compile, and no asset
 repacking.
+
+### Asset cache versioning and validation
+
+The browser caches the extracted data bundle in IndexedDB. To decide when that
+cache is stale, `wasm/web/script.js` fetches `/game/data_version.txt` and wipes
+the cache whenever the token changes. `wasm/pack_assets.sh` regenerates that file
+on every pack, deriving the token from the SHA-256 of the packed bundles, so any
+change to the assets automatically invalidates every browser's cache — there is
+no constant to bump by hand. (If the file is ever absent, e.g. an older deploy,
+the front-end falls back to the previous hard-coded `data_version`.)
+
+`pack_assets.sh` also validates the packed tree before compressing it: for every
+model (`.spm`/`.b3d`) it checks that each texture the model references actually
+exists in the bundle. This catches the class of bug that shows up as **white /
+untextured item boxes** — e.g. a `.png` that was converted to `.jpg` (see
+`android/generate_assets.sh`, `CONVERT_TO_JPG`) but whose reference in the model
+was not updated. A dangling reference fails the pack instead of shipping a broken
+bundle. JPG conversion itself is kept on (it meaningfully shrinks the download);
+the validation just guarantees the references stay consistent with it.
 
 > Note: Cloudflare Workers Static Assets reject individual files larger than
 > 25 MiB. The asset bundles are split into 20 MB chunks, but keep an eye on
@@ -191,7 +211,7 @@ wasm/pack_assets.sh ../stk-assets
 ## Discord Activity
 
 - The browser dependencies used by `wasm/web/script.js` are vendored under `wasm/web/vendor`, so the web build no longer depends on third-party CDNs.
-- Set `discord_client_id` in `wasm/web/config.json` to enable Discord Activity OAuth for the embedded build.
+- Set `discord_client_id` in `wasm/web/config.json` to enable Discord Activity OAuth for the embedded build. The committed `wasm/web/config_example.json` (copied to `config.json` by the build when none exists) already carries the project's public client id.
 - Configure `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` as Cloudflare Worker secrets (`wrangler secret put ...`) so the `/api/token` Worker route can exchange the Discord authorization code server-side.
 - The Discord Activity flow is single-player only for now; networking remains TODO.
 - `SharedArrayBuffer` / cross-origin isolation is still being tried via the existing `wasm/web/_headers` COOP/COEP settings.

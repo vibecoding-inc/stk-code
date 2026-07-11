@@ -7,6 +7,11 @@ let db = null;
 let db_name = "stk_db";
 let store_name = "stk_store";
 let idbfs_mount = null;
+// Fallback asset-cache version, only used if /game/data_version.txt is missing
+// (e.g. an old deploy). Normally the version is fetched at runtime from that
+// file, which the asset packer regenerates whenever the bundles change, so the
+// browser's IndexedDB cache is invalidated automatically and never needs a
+// manual bump here. See get_data_version() and wasm/pack_assets.sh.
 let data_version = 1;
 
 let start_button = document.getElementById("start_button");
@@ -181,11 +186,28 @@ async function extract_tar(url, fs_path, use_cache = false) {
   }
 }
 
+async function get_data_version() {
+  // The asset packer writes a content-derived token to /game/data_version.txt
+  // every time the bundles are (re)generated. Fetching it here means the cached
+  // assets are invalidated automatically whenever the packed data changes, so
+  // nobody has to remember to bump a constant. Fall back to data_version if the
+  // file is missing (older deploy) so behaviour is unchanged in that case.
+  try {
+    let response = await fetch("/game/data_version.txt", { cache: "no-cache" });
+    if (response.ok) {
+      let version = (await response.text()).trim();
+      if (version) return version;
+    }
+  } catch {}
+  return data_version;
+}
+
 async function load_data() {
   //check if we need to update the assets bundle
-  if (!await check_db("/version") || !(await read_db("/version") == data_version)) {
+  let version = await get_data_version();
+  if (!await check_db("/version") || !(await read_db("/version") == version)) {
     await delete_db();
-    await write_db("/version", data_version);
+    await write_db("/version", version);
   }
 
   let quality = quality_select.value;
