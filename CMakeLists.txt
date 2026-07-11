@@ -165,7 +165,16 @@ if (IOS)
     option(USE_GLES2 "Use OpenGL ES2 renderer" ON)
 endif()
 
-if((UNIX AND NOT APPLE) AND NOT SERVER_ONLY)
+# NOTE: Emscripten is deliberately excluded here. The Emscripten toolchain sets
+# UNIX=1, so without this guard the web build would fall into the "else" branch
+# below and run option(USE_GLES2 ... OFF). Because this project declares
+# cmake_minimum_required(VERSION 3.6.0), policy CMP0077 defaults to OLD, so that
+# option() overrides the earlier `set(USE_GLES2 1)` in the EMSCRIPTEN block and
+# turns GLES2 OFF. That made STK request a desktop-GL (EDT_OPENGL) context on the
+# web; SDL2's Emscripten EGL backend then passes no EGL_CONTEXT_CLIENT_VERSION, so
+# eglCreateContext fails with EGL_BAD_CONFIG ("Could not initialize display!").
+# WebGL is always GLES, so the web build must keep USE_GLES2 forced on.
+if((UNIX AND NOT APPLE AND NOT EMSCRIPTEN) AND NOT SERVER_ONLY)
     if((${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm") OR 
        (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64") OR
        (${CMAKE_SYSTEM_PROCESSOR} MATCHES "riscv64"))

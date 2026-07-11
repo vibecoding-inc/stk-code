@@ -46,6 +46,15 @@ address this:
 This still relies on the COOP/COEP cross-origin-isolation headers in
 `wasm/web/_headers` (needed for `SharedArrayBuffer`).
 
+The web build **must** use the GLES2 renderer (`USE_GLES2`). Browsers only expose
+GL through WebGL, and SDL2's Emscripten backend passes
+`EGL_CONTEXT_CLIENT_VERSION` to `eglCreateContext` **only** when an OpenGL ES
+profile is requested; anything else makes Emscripten's EGL default to GLES1 and
+reject the context with `EGL_BAD_CONFIG` (`Could not initialize display!`). The
+`EMSCRIPTEN` block in the top-level `CMakeLists.txt` forces `USE_GLES2` on, and
+the generic `UNIX` block that would otherwise `option(USE_GLES2 ... OFF)` is
+guarded to skip Emscripten (see the comment there for the CMP0077 detail).
+
 ## Building with Docker (recommended)
 
 This is the reproducible path used both locally and in CI. It only requires
