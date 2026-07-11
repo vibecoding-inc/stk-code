@@ -755,13 +755,9 @@ void UserConfig::saveConfig()
         FileUtils::renameU8Path(filename + "new", filename);
 
 #ifdef __EMSCRIPTEN__
-        // The game loop runs on a dedicated pthread (see -sPROXY_TO_PTHREAD),
-        // but sync_idbfs() and the IDBFS mount only exist on the browser main
-        // thread. Proxy the call there so it doesn't fail with
-        // "globalThis.sync_idbfs is not a function".
-        MAIN_THREAD_ASYNC_EM_ASM({
+        EM_ASM(
             globalThis.sync_idbfs();
-        });
+        );
 #endif
     }
     catch (std::runtime_error& e)

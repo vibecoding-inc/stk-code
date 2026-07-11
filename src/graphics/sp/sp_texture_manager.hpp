@@ -103,9 +103,18 @@ public:
     // ------------------------------------------------------------------------
     void addThreadedFunction(std::function<bool()> threaded_function)
     {
+#ifdef __EMSCRIPTEN__
+        // No texture-loader worker threads exist on the web (see the
+        // constructor), so run the load synchronously on the calling (main)
+        // thread. SPTexture::threadedLoad always returns true, so a single call
+        // is sufficient; it queues the follow-up GL command as usual, which
+        // checkForGLCommand() then runs on the main thread.
+        threaded_function();
+#else
         std::lock_guard<std::mutex> lock(m_thread_obj_mutex);
         m_threaded_functions.push_back(threaded_function);
         m_thread_obj_cv.notify_one();
+#endif
     }
     // ------------------------------------------------------------------------
     void addGLCommandFunction(std::function<bool()> function)

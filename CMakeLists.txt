@@ -113,22 +113,24 @@ if(EMSCRIPTEN)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -pthread")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -pthread")
 
-    # Run main() (and the whole game loop) on a dedicated pthread instead of the
-    # browser's main thread. STK's start-up spawns worker threads (e.g. the SP
-    # texture-loader pool) and then busy-waits on them (checkForGLCommand). On the
-    # web, Workers cannot boot while the main browser thread is stuck inside
-    # Wasm/JS, so that blocking wait deadlocks the event loop and the renderer
-    # init aborts ("Couldn't initialise irrlicht device"). PROXY_TO_PTHREAD frees
-    # the browser main thread to service pthread_create and events.
+    # STK renders through Irrlicht -> SDL2, whose Emscripten backend creates its
+    # WebGL context via EGL. Emscripten's EGL always creates that context on the
+    # browser main thread (eglCreateContext is proxied there and uses
+    # Module['canvas']) and the context cannot be made current on another pthread.
+    # Therefore main() and the whole GL/game loop MUST run on the browser main
+    # thread. An earlier attempt to move main() onto a pthread with
+    # PROXY_TO_PTHREAD failed for exactly this reason: neither OFFSCREENCANVAS_SUPPORT
+    # (canvas transfer, emscripten-core/emscripten#20547) nor OFFSCREEN_FRAMEBUFFER
+    # (ignored by EGL/SDL2) let SDL2 obtain a context off the main thread, so device
+    # creation aborted with "Could not initialise irrlicht device".
     #
-    # GL reaches the page via OFFSCREEN_FRAMEBUFFER: the #canvas stays owned by the
-    # browser main thread and Emscripten proxies the GL calls made from the game
-    # pthread to it. We deliberately do NOT transfer the canvas with
-    # OFFSCREENCANVAS_SUPPORT/OFFSCREENCANVASES_TO_PTHREAD: Emscripten's SDL2 video
-    # backend does not reliably create its WebGL context on the owning worker and
-    # instead tries getContext() on the (already transferred) main-thread canvas,
-    # which fails with "Could not initialize display!" (emscripten-core/emscripten#20547).
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sPROXY_TO_PTHREAD -sOFFSCREEN_FRAMEBUFFER=1 -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
+    # STK still uses several std::thread workers. Pre-create a pthread pool so they
+    # can start even while the main thread is briefly busy inside Wasm (Workers
+    # cannot be spawned on demand while the main thread is blocked); POOL_SIZE_STRICT=0
+    # allows growth beyond the pool without warnings. Texture loading, which STK
+    # synchronously waits on during start-up, is run inline (no worker threads) on
+    # the web to avoid that startup deadlock (see SPTextureManager).
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency -sPTHREAD_POOL_SIZE_STRICT=0 -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
 
     if(CMAKE_BUILD_TYPE MATCHES Debug)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --profiling")

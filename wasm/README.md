@@ -20,25 +20,31 @@ Caveats:
 
 ### Threading / rendering
 
-The game is linked with `-sPROXY_TO_PTHREAD` so `main()` and the whole game
-loop run on a dedicated pthread (Web Worker) rather than the browser's main
-thread. This is required because STK's start-up spawns worker threads (e.g. the
-SP texture-loader pool) and then busy-waits on them; on the web a Worker cannot
-start while the main browser thread is stuck inside Wasm, so running the game on
-the main thread deadlocked the event loop and the renderer aborted with
-`Couldn't initialise irrlicht device`.
+`main()` and the whole GL/game loop run on the **browser main thread**. This is
+not optional: STK renders through Irrlicht → SDL2, whose Emscripten backend
+creates its WebGL context via EGL, and Emscripten's EGL always creates that
+context on the browser main thread (`eglCreateContext` is proxied there and uses
+`Module['canvas']`); the context cannot be made current on any other pthread.
+Running the game on a pthread with `-sPROXY_TO_PTHREAD` therefore made SDL2 fail
+to obtain a context and the renderer aborted with `Couldn't initialise irrlicht
+device`. Neither `-sOFFSCREENCANVAS_SUPPORT` (canvas transfer, see
+emscripten-core/emscripten#20547) nor `-sOFFSCREEN_FRAMEBUFFER` (ignored by
+EGL/SDL2) works around this, so both were removed.
 
-GL reaches the page through `-sOFFSCREEN_FRAMEBUFFER=1`: the `#canvas` element
-stays owned by the browser main thread and Emscripten proxies the GL calls made
-from the game pthread to it. We deliberately do **not** transfer the canvas to
-the worker with `-sOFFSCREENCANVAS_SUPPORT` / `-sOFFSCREENCANVASES_TO_PTHREAD`,
-because Emscripten's SDL2 video backend does not reliably create its WebGL
-context on the owning worker — it instead calls `getContext()` on the
-already-transferred main-thread canvas, which fails with
-`Could not initialize display!` (see emscripten-core/emscripten#20547). GL-call
-proxying is slower per frame but is the supported SDL2 path. This still relies on
-the COOP/COEP cross-origin-isolation headers in `wasm/web/_headers` (needed for
-`SharedArrayBuffer`).
+STK's start-up used to spawn the SP texture-loader worker pool and then
+busy-wait on it (`checkForGLCommand`); on the web a Worker cannot start while the
+main browser thread is stuck inside Wasm, which deadlocked start-up. Two things
+address this:
+
+- Texture loading no longer uses worker threads on the web — `SPTextureManager`
+  runs each load inline on the main thread (`SPTextureManager::addThreadedFunction`).
+- STK's remaining `std::thread` users get a pre-created pthread pool
+  (`-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency
+  -sPTHREAD_POOL_SIZE_STRICT=0`) so they can start without the main thread having
+  to yield first.
+
+This still relies on the COOP/COEP cross-origin-isolation headers in
+`wasm/web/_headers` (needed for `SharedArrayBuffer`).
 
 ## Building with Docker (recommended)
 

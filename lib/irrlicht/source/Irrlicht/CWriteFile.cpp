@@ -55,13 +55,9 @@ s32 CWriteFile::write(const void* buffer, u32 sizeToWrite)
 
 	s32 ret = fwrite(buffer, 1, sizeToWrite, File);
 #ifdef __EMSCRIPTEN__
-	// The game loop runs on a dedicated pthread (see -sPROXY_TO_PTHREAD), but
-	// sync_idbfs() and the IDBFS mount only exist on the browser main thread.
-	// Proxy the call there (async, fire-and-forget) so it doesn't fail with
-	// "globalThis.sync_idbfs is not a function" and doesn't block every write.
-	MAIN_THREAD_ASYNC_EM_ASM({
+	EM_ASM(
 		globalThis.sync_idbfs();
-	});
+	);
 #endif
 	return ret;
 }

@@ -49,6 +49,15 @@ SPTextureManager::SPTextureManager()
     }
 #endif
     m_max_threaded_load_obj.store(m_max_threaded_load_obj.load() + 1);
+#ifdef __EMSCRIPTEN__
+    // On the web we do not spawn texture-loader worker threads: browser Web
+    // Workers cannot be created while the main thread is busy inside Wasm, and
+    // STK synchronously waits on these workers during start-up
+    // (checkForGLCommand), which deadlocked the renderer. Instead texture loads
+    // run inline on the main thread (see addThreadedFunction). Keep the count at
+    // 0 so nothing tries to join non-existent threads.
+    m_max_threaded_load_obj.store(0);
+#else
     for (unsigned i = 0; i < m_max_threaded_load_obj; i++)
     {
         m_threaded_load_obj.emplace_back(
@@ -79,6 +88,7 @@ SPTextureManager::SPTextureManager()
                 }
             });
     }
+#endif
     m_textures["unicolor_white"] = SPTexture::getWhiteTexture();
     m_textures[""] = SPTexture::getTransparentTexture();
 }   // SPTextureManager
