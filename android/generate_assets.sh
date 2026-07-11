@@ -295,7 +295,10 @@ convert_sound()
         return
     fi
 
-    oggdec "$FILE" -o tmp.wav
+    # -Q (quiet) suppresses oggdec's per-frame progress spinner, which otherwise
+    # floods the (CI) log with hundreds of "[ xx.x%] [ 0m00s remaining]" lines
+    # per file. The "Convert file: ..." echo above already gives one line per asset.
+    oggdec -Q "$FILE" -o tmp.wav
 
     if [ -s tmp.wav ]; then
         OGGENC_CMD=""
@@ -313,7 +316,9 @@ convert_sound()
 
         OGGENC_CMD="$OGGENC_CMD -b $SOUND_QUALITY"
 
-        oggenc $OGGENC_CMD tmp.wav -o tmp.ogg
+        # -Q (quiet): same reason as oggdec above (suppress the progress spinner
+        # and the per-file encode summary that spammed the log).
+        oggenc -Q $OGGENC_CMD tmp.wav -o tmp.ogg
     fi
 
     if [ -s tmp.ogg ]; then
