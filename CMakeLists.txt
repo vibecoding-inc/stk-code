@@ -119,9 +119,16 @@ if(EMSCRIPTEN)
     # web, Workers cannot boot while the main browser thread is stuck inside
     # Wasm/JS, so that blocking wait deadlocks the event loop and the renderer
     # init aborts ("Couldn't initialise irrlicht device"). PROXY_TO_PTHREAD frees
-    # the browser main thread to service pthread_create and events, and the canvas
-    # is handed to the game thread as an OffscreenCanvas so GL runs there too.
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sPROXY_TO_PTHREAD -sOFFSCREENCANVAS_SUPPORT=1 -sOFFSCREENCANVASES_TO_PTHREAD=#canvas -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
+    # the browser main thread to service pthread_create and events.
+    #
+    # GL reaches the page via OFFSCREEN_FRAMEBUFFER: the #canvas stays owned by the
+    # browser main thread and Emscripten proxies the GL calls made from the game
+    # pthread to it. We deliberately do NOT transfer the canvas with
+    # OFFSCREENCANVAS_SUPPORT/OFFSCREENCANVASES_TO_PTHREAD: Emscripten's SDL2 video
+    # backend does not reliably create its WebGL context on the owning worker and
+    # instead tries getContext() on the (already transferred) main-thread canvas,
+    # which fails with "Could not initialize display!" (emscripten-core/emscripten#20547).
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sPROXY_TO_PTHREAD -sOFFSCREEN_FRAMEBUFFER=1 -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
 
     if(CMAKE_BUILD_TYPE MATCHES Debug)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --profiling")

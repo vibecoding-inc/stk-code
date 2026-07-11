@@ -26,12 +26,19 @@ thread. This is required because STK's start-up spawns worker threads (e.g. the
 SP texture-loader pool) and then busy-waits on them; on the web a Worker cannot
 start while the main browser thread is stuck inside Wasm, so running the game on
 the main thread deadlocked the event loop and the renderer aborted with
-`Couldn't initialise irrlicht device`. The `#canvas` element is handed to the
-game thread as an `OffscreenCanvas` (`-sOFFSCREENCANVAS_SUPPORT=1
--sOFFSCREENCANVASES_TO_PTHREAD=#canvas`) so GL runs on that thread too. This
-relies on the COOP/COEP cross-origin-isolation headers in `wasm/web/_headers`
-(needed for `SharedArrayBuffer`) and on browser support for transferring an
-`OffscreenCanvas` to a worker.
+`Couldn't initialise irrlicht device`.
+
+GL reaches the page through `-sOFFSCREEN_FRAMEBUFFER=1`: the `#canvas` element
+stays owned by the browser main thread and Emscripten proxies the GL calls made
+from the game pthread to it. We deliberately do **not** transfer the canvas to
+the worker with `-sOFFSCREENCANVAS_SUPPORT` / `-sOFFSCREENCANVASES_TO_PTHREAD`,
+because Emscripten's SDL2 video backend does not reliably create its WebGL
+context on the owning worker — it instead calls `getContext()` on the
+already-transferred main-thread canvas, which fails with
+`Could not initialize display!` (see emscripten-core/emscripten#20547). GL-call
+proxying is slower per frame but is the supported SDL2 path. This still relies on
+the COOP/COEP cross-origin-isolation headers in `wasm/web/_headers` (needed for
+`SharedArrayBuffer`).
 
 ## Building with Docker (recommended)
 
