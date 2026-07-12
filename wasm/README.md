@@ -226,3 +226,55 @@ wasm/pack_assets.sh ../stk-assets
 - Configure `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` as Cloudflare Worker secrets (`wrangler secret put ...`) so the `/api/token` Worker route can exchange the Discord authorization code server-side.
 - The Discord Activity flow is single-player only for now; networking remains TODO.
 - `SharedArrayBuffer` / cross-origin isolation is still being tried via the existing `wasm/web/_headers` COOP/COEP settings.
+
+## Telemetry
+
+Every browser session (including Discord Activity sessions) forwards its log
+output to Cloudflare so runs that can't be reproduced locally can still be
+inspected afterwards. This is always on and fail-open — any telemetry error is
+swallowed and never affects game start-up.
+
+- **Client collector** (`wasm/web/telemetry.js`, wired up in `wasm/web/script.js`)
+  wraps Emscripten's `Module.print`/`printErr`, the JS `console.log/info/warn/error`
+  methods and uncaught errors (`window.onerror`, `unhandledrejection`, the
+  `webglcontextcreationerror` canvas event). It still prints to the real console
+  for local debugging, buffers `{ts, level, source, message}` entries, and flushes
+  every ~5 s (and on `pagehide`/`visibilitychange`) via `navigator.sendBeacon`
+  (falling back to `fetch(..., {keepalive: true})`). Each batch is tagged with a
+  generated session id plus build/data version, texture quality, Discord user id
+  (when authenticated), user agent and best-effort memory/load timings.
+- **Ingest route** `POST /api/telemetry` (`wasm/worker/telemetry.mjs`) is
+  same-origin, so it passes Discord's proxied CSP the same way `/api/token` does.
+  It validates and clamps each batch (caps entry count, truncates every message
+  to ~2 KB, coerces `level`/`source` to known values), then fans out to two
+  Cloudflare-native sinks.
+- **Analytics Engine** dataset `stk_wasm_telemetry` (binding `TELEMETRY` in
+  `wasm/wrangler.jsonc`) stores one data point per log entry for queryable
+  ~90-day history: `index1 = session`; `blob1..8 = level, source, message,
+  discord_user_id, build_version, quality, user_agent, original_ts_iso`;
+  `double1 = 1` (count) plus `memory_mb` and `load_ms`.
+- **Workers Logs** receive a compact structured line per entry (keyed by level),
+  persisted because `observability.enabled` is `true`.
+
+### Querying historical sessions
+
+Analytics Engine can't be queried from inside a Worker; query it out-of-band via
+the [SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/)
+with a Cloudflare API token, e.g.:
+
+```bash
+curl "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/analytics_engine/sql" \
+  -H "Authorization: Bearer <API_TOKEN>" \
+  -d "SELECT timestamp, blob1 AS level, blob3 AS message
+      FROM stk_wasm_telemetry
+      WHERE index1 = '<session>' AND timestamp >= NOW() - INTERVAL '1' DAY
+      ORDER BY timestamp"
+```
+
+### Tailing live logs
+
+During a play-test, tail the echoed lines live from `wasm/`:
+
+```bash
+npx wrangler tail
+```

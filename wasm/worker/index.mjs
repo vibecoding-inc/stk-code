@@ -12,9 +12,10 @@
 // non-asset requests such as /api/token are handled below.
 
 import { handleTokenExchange } from "./token.mjs";
+import { handleTelemetry } from "./telemetry.mjs";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/token") {
@@ -22,6 +23,10 @@ export default {
         return new Response("Method Not Allowed", {status: 405});
       }
       return handleTokenExchange({request, env});
+    }
+
+    if (url.pathname === "/api/telemetry") {
+      return handleTelemetry({request, env, ctx});
     }
 
     // Fall back to the static assets for anything else.

@@ -23,10 +23,23 @@
     "binding": "ASSETS"
   },
 
+  // Analytics Engine sink for the telemetry pipeline. The browser collector
+  // (wasm/web/telemetry.js) batches engine/console/error output to the
+  // POST /api/telemetry route (wasm/worker/telemetry.mjs), which writes one
+  // data point per log entry to this dataset for queryable ~90-day history.
+  "analytics_engine_datasets": [
+    {
+      "binding": "TELEMETRY",
+      "dataset": "stk_wasm_telemetry"
+    }
+  ],
+
   // Workers observability: keep invocation logs and traces persisted so runs
-  // can be inspected in the Cloudflare dashboard.
+  // can be inspected in the Cloudflare dashboard. Enabling this also persists
+  // the compact lines the telemetry handler echoes via console.*, making them
+  // tailable with `wrangler tail`.
   "observability": {
-    "enabled": false,
+    "enabled": true,
     "head_sampling_rate": 1,
     "logs": {
       "enabled": true,

@@ -2,6 +2,7 @@ import pako from "/vendor/pako.esm.js";
 import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import { init_discord_activity } from "/discord-activity.js";
+import { init_telemetry } from "/telemetry.js";
 
 let db = null;
 let db_name = "stk_db";
@@ -22,6 +23,44 @@ let quality_select = document.getElementById("quality_select");
 let syncing_fs = false;
 let config = {};
 let create_discord_sdk = (client_id) => new DiscordSDK(client_id);
+
+// Telemetry collector handle. Initialized at the start of main() (before run())
+// so engine stdout/stderr, console output and uncaught errors are captured from
+// the earliest point script.js controls, then shipped to /api/telemetry.
+let telemetry = null;
+
+// Dynamic per-batch metadata: the user agent plus best-effort available-memory
+// and load-timing figures. Build/data version, quality and the Discord user id
+// are attached separately via telemetry.enrich() once they are known.
+function telemetry_metadata() {
+  let meta = {};
+  try {
+    let nav = globalThis.navigator;
+    if (nav && typeof nav.userAgent === "string") {
+      meta.user_agent = nav.userAgent;
+    }
+    if (nav && typeof nav.deviceMemory === "number") {
+      meta.memory_mb = Math.round(nav.deviceMemory * 1024);
+    }
+    let perf = globalThis.performance;
+    if (perf && typeof perf.now === "function") {
+      meta.load_ms = Math.round(perf.now());
+    }
+  }
+  catch {}
+  return meta;
+}
+
+function init_telemetry_collector() {
+  try {
+    telemetry = init_telemetry({
+      module: typeof Module !== "undefined" ? Module : undefined,
+      get_metadata: telemetry_metadata,
+    });
+    globalThis.telemetry = telemetry;
+  }
+  catch {}
+}
 
 function set_config(next_config) {
   config = next_config;
@@ -262,8 +301,31 @@ async function init_discord() {
 
 async function main() {
   globalThis.ready = true;
+  // Start capturing as early as possible so engine output (once run() fires),
+  // console output and uncaught errors are all funnelled into the collector.
+  init_telemetry_collector();
   await load_config();
+  // Attach build/data version and the selected texture quality now that the
+  // config is loaded. get_data_version() falls back to the hard-coded version.
+  try {
+    let version = await get_data_version();
+    if (telemetry) {
+      telemetry.enrich({
+        build_version: String(version),
+        quality: quality_select.value,
+      });
+    }
+  }
+  catch {}
   await init_discord();
+  // Attach the Discord user id when the Activity login succeeded.
+  try {
+    let auth = globalThis.discordAuth;
+    if (telemetry && auth && auth.user && auth.user.id) {
+      telemetry.enrich({discord_user_id: String(auth.user.id)});
+    }
+  }
+  catch {}
   await load_idbfs();
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
@@ -296,7 +358,13 @@ Module["canvas"] = document.getElementById("canvas")
 // still reports "Could not initialize display!", it means getContext was never
 // called (i.e. SDL_CreateWindow failed before reaching context creation).
 Module["canvas"].addEventListener("webglcontextcreationerror", (e) => {
-  console.error("webglcontextcreationerror:", e.statusMessage);
+  let message = "webglcontextcreationerror: " + e.statusMessage;
+  // Route through the collector as an explicit error source, and keep printing
+  // to the real console so local debugging is unaffected.
+  if (telemetry) {
+    telemetry.record({level: "error", source: "error", message});
+  }
+  console.error(message);
 }, false);
 globalThis.main = main;
 globalThis.sync_idbfs = sync_idbfs;
