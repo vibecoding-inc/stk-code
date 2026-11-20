@@ -52,6 +52,7 @@ function telemetry_metadata() {
 }
 
 function init_telemetry_collector() {
+  if (telemetry) return;
   try {
     telemetry = init_telemetry({
       module: typeof Module !== "undefined" ? Module : undefined,
@@ -339,6 +340,9 @@ async function main() {
 async function start_game() {
   status_text.textContent = "Loading game files...";
   start_button.disabled = true;
+  if (telemetry) {
+    telemetry.enrich({quality: quality_select.value});
+  }
   await load_data();
   await wait_for_frame();
   status_text.textContent = "Launching game...";
@@ -370,8 +374,25 @@ globalThis.main = main;
 globalThis.sync_idbfs = sync_idbfs;
 globalThis.load_idbfs = load_idbfs;
 
+// Initialize telemetry immediately on module load (before waiting for
+// Emscripten's runtime to become ready) so any early abort or wasm-instantiate
+// failure is drained and shipped even if main() never runs.
+init_telemetry_collector();
+
+let runtime_ready_watchdog = setTimeout(() => {
+  if (!globalThis.ready && telemetry) {
+    telemetry.record({
+      level: "error",
+      source: "error",
+      message: "Emscripten runtime did not become ready within 20s (possible wasm-instantiate stall or abort).",
+    });
+    telemetry.flush();
+  }
+}, 20000);
+
 let poll_runtime_interval = setInterval(() => {
   if (globalThis.ready) {
+    clearTimeout(runtime_ready_watchdog);
     main();
     clearInterval(poll_runtime_interval);
   }

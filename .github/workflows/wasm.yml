@@ -39,6 +39,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Run WASM web and worker JS tests
+        run: node --test wasm/web/tests/*.test.mjs
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 

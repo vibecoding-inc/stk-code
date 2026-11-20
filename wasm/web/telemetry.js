@@ -231,16 +231,33 @@ export function init_telemetry({
   function wrap_module() {
     try {
       if (!module || typeof module !== "object") return;
+      // index.html pre-wires Module.print/printErr/onAbort before
+      // supertuxkart.js loads so Emscripten binds out/err directly and never
+      // installs ASSERTIONS getter traps; don't double-wrap in that case.
+      if (module.__stkTelemetryHooked) return;
       let pairs = [
-        {key: "print", level: "log"},
-        {key: "printErr", level: "error"},
+        {key: "print", level: "log", source: "engine", urgent: false},
+        {key: "printErr", level: "error", source: "engine", urgent: false},
+        {key: "onAbort", level: "error", source: "error", urgent: true},
       ];
-      for (let {key, level} of pairs) {
+      for (let {key, level, source, urgent} of pairs) {
+        // Never invoke an accessor getter on Module: with -sASSERTIONS=1,
+        // Emscripten installs getter traps on unexported runtime methods
+        // (including print/printErr) that call abort() when read.
+        let desc = Object.getOwnPropertyDescriptor(module, key);
+        if (desc && (typeof desc.get === "function" || typeof desc.set === "function")) {
+          continue;
+        }
         let previous =
           typeof module[key] === "function" ? module[key].bind(module) : null;
         restore_module.push({key, original: module[key]});
         module[key] = (text) => {
-          record({level, source: "engine", message: typeof text === "string" ? text : safe_stringify(text)});
+          let rendered = typeof text === "string" ? text : safe_stringify(text);
+          let message = key === "onAbort" ? `Emscripten abort: ${rendered}` : rendered;
+          record({level, source, message});
+          if (urgent) {
+            flush();
+          }
           if (previous) {
             try {
               previous(text);
@@ -248,6 +265,24 @@ export function init_telemetry({
             catch {}
           }
         };
+      }
+    }
+    catch {}
+  }
+
+  function drain_early_queue() {
+    try {
+      let queue = scope.__stkEarlyTelemetry;
+      if (!Array.isArray(queue) || queue.length === 0) return;
+      let entries = queue.splice(0, queue.length);
+      let should_flush = false;
+      for (let entry of entries) {
+        if (!entry || typeof entry !== "object") continue;
+        record(entry);
+        if (entry.urgent) should_flush = true;
+      }
+      if (should_flush) {
+        flush();
       }
     }
     catch {}
@@ -272,6 +307,7 @@ export function init_telemetry({
           source: "error",
           message: error ? safe_stringify(error) : safe_stringify(message),
         });
+        flush();
         if (typeof previous_onerror === "function") {
           try {
             return previous_onerror(message, source, lineno, colno, error);
@@ -287,6 +323,7 @@ export function init_telemetry({
     add_listener("unhandledrejection", (event) => {
       let reason = event && "reason" in event ? event.reason : event;
       record({level: "error", source: "error", message: safe_stringify(reason)});
+      flush();
     });
   }
 
@@ -374,6 +411,7 @@ export function init_telemetry({
   install_error_handlers();
   install_unload_handlers();
   start_flush_timer();
+  drain_early_queue();
 
   return {
     session,

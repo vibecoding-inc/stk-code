@@ -6,6 +6,48 @@
 
     <title>SuperTuxKart</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <script>
+      // Define Module hooks BEFORE supertuxkart.js loads so Emscripten binds
+      // out/err/onAbort to our telemetry bridge instead of installing
+      // ASSERTIONS getter traps on Module.print/printErr or bypassing
+      // console wrapping.
+      (function () {
+        var rawLog = console.log.bind(console);
+        var rawErr = console.error.bind(console);
+        var queue = (globalThis.__stkEarlyTelemetry = globalThis.__stkEarlyTelemetry || []);
+        var MAX_EARLY = 200;
+
+        function emit(level, source, message, urgent) {
+          try {
+            var tel = globalThis.telemetry;
+            if (tel && typeof tel.record === "function") {
+              tel.record({level: level, source: source, message: message});
+              if (urgent && typeof tel.flush === "function") {
+                tel.flush();
+              }
+              return;
+            }
+            if (queue.length < MAX_EARLY) {
+              queue.push({ts: Date.now(), level: level, source: source, message: message, urgent: !!urgent});
+            }
+          } catch (_) {}
+        }
+
+        var mod = (globalThis.Module = globalThis.Module || {});
+        mod.__stkTelemetryHooked = true;
+        mod.print = function (text) {
+          rawLog(text);
+          emit("log", "engine", String(text), false);
+        };
+        mod.printErr = function (text) {
+          rawErr(text);
+          emit("error", "engine", String(text), false);
+        };
+        mod.onAbort = function (what) {
+          emit("error", "error", "Emscripten abort: " + String(what), true);
+        };
+      })();
+    </script>
     <script src="/game/supertuxkart.js"></script>
     <script>
       //emscripten only tells us if the runtime is ready once it starts main

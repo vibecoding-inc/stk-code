@@ -284,13 +284,16 @@ test("uncaught errors are captured through onerror and unhandledrejection", {con
   scope.onerror("msg", "file.js", 1, 2, new Error("kaboom"));
   dispatch("unhandledrejection", {reason: new Error("rejected")});
 
-  telemetry.flush();
-  let payload = JSON.parse(await sent[0].text());
-  assert.equal(payload.entries.length, 2);
-  assert.equal(payload.entries[0].source, "error");
-  assert.equal(payload.entries[0].level, "error");
-  assert.match(payload.entries[0].message, /kaboom/);
-  assert.match(payload.entries[1].message, /rejected/);
+  // Uncaught errors flush immediately so startup/fatal crashes aren't lost.
+  assert.equal(sent.length, 2);
+  let first = JSON.parse(await sent[0].text());
+  let second = JSON.parse(await sent[1].text());
+  assert.equal(first.entries.length, 1);
+  assert.equal(first.entries[0].source, "error");
+  assert.equal(first.entries[0].level, "error");
+  assert.match(first.entries[0].message, /kaboom/);
+  assert.equal(second.entries.length, 1);
+  assert.match(second.entries[0].message, /rejected/);
   assert.equal(previous_onerror_called, true);
 
   telemetry.dispose();
@@ -386,4 +389,106 @@ test("telemetry never throws when the transport fails", {concurrency: false}, as
     telemetry.record({level: "warn", source: "error", message: "manual"});
     telemetry.dispose();
   });
+});
+
+test("wrap_module skips Emscripten ASSERTIONS getter traps without invoking them", {concurrency: false}, () => {
+  let {scope} = make_scope();
+  let timer = make_timer();
+  let getter_called = false;
+  let module = {};
+  for (let key of ["print", "printErr"]) {
+    Object.defineProperty(module, key, {
+      configurable: true,
+      get() {
+        getter_called = true;
+        throw new Error(`'${key}' was not exported. add it to EXPORTED_RUNTIME_METHODS`);
+      },
+    });
+  }
+
+  let telemetry = init_telemetry({
+    module,
+    console_impl: {log() {}, info() {}, warn() {}, error() {}},
+    global_scope: scope,
+    send_beacon: () => true,
+    generate_id: () => "s",
+    set_interval: timer.set_interval,
+    clear_interval: timer.clear_interval,
+  });
+
+  assert.equal(getter_called, false);
+  telemetry.dispose();
+  assert.equal(getter_called, false);
+});
+
+test("Module.onAbort records an error and flushes immediately", {concurrency: false}, async () => {
+  let {scope} = make_scope();
+  let timer = make_timer();
+  let sent = [];
+  let prev_abort_arg = null;
+  let module = {
+    onAbort: (what) => {
+      prev_abort_arg = what;
+    },
+  };
+
+  let telemetry = init_telemetry({
+    module,
+    console_impl: {log() {}, info() {}, warn() {}, error() {}},
+    global_scope: scope,
+    send_beacon: (url, blob) => {
+      sent.push(blob);
+      return true;
+    },
+    now: () => 500,
+    generate_id: () => "s",
+    set_interval: timer.set_interval,
+    clear_interval: timer.clear_interval,
+  });
+
+  module.onAbort("wasm-instantiate failed");
+  assert.equal(prev_abort_arg, "wasm-instantiate failed");
+  assert.equal(sent.length, 1);
+  let payload = JSON.parse(await sent[0].text());
+  assert.equal(payload.entries.length, 1);
+  assert.deepEqual(payload.entries[0], {
+    ts: 500,
+    level: "error",
+    source: "error",
+    message: "Emscripten abort: wasm-instantiate failed",
+  });
+
+  telemetry.dispose();
+});
+
+test("drains pre-init __stkEarlyTelemetry queue and flushes urgent entries immediately", {concurrency: false}, async () => {
+  let {scope} = make_scope();
+  let timer = make_timer();
+  let sent = [];
+  scope.__stkEarlyTelemetry = [
+    {ts: 10, level: "log", source: "engine", message: "early stdout", urgent: false},
+    {ts: 20, level: "error", source: "error", message: "Emscripten abort: boom", urgent: true},
+  ];
+
+  let telemetry = init_telemetry({
+    module: {__stkTelemetryHooked: true, print() {}},
+    console_impl: {log() {}, info() {}, warn() {}, error() {}},
+    global_scope: scope,
+    send_beacon: (url, blob) => {
+      sent.push(blob);
+      return true;
+    },
+    generate_id: () => "s",
+    set_interval: timer.set_interval,
+    clear_interval: timer.clear_interval,
+  });
+
+  assert.equal(scope.__stkEarlyTelemetry.length, 0);
+  assert.equal(sent.length, 1);
+  let payload = JSON.parse(await sent[0].text());
+  assert.equal(payload.entries.length, 2);
+  assert.equal(payload.entries[0].message, "early stdout");
+  assert.equal(payload.entries[1].message, "Emscripten abort: boom");
+
+  telemetry.dispose();
 });
