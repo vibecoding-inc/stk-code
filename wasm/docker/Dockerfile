@@ -15,9 +15,11 @@ FROM emscripten/emsdk:${EMSDK_VERSION}
 # - ragel: harfbuzz generates its OpenType shaper state machines
 #   (hb-ot-shaper-*-machine.hh) from .rl sources with ragel; the git checkout
 #   does not ship the pre-generated headers, so the build fails without it.
-# - imagemagick/vorbis-tools/pngquant/advancecomp/libjpeg-progs/optipng/gawk:
+# - imagemagick/vorbis-tools/pngquant/advancecomp/libjpeg-progs/optipng/gawk/bsdextrautils:
 #   used by the asset packing pipeline (android/generate_assets.sh +
-#   data/optimize_data.sh).
+#   data/optimize_data.sh). bsdextrautils provides hexdump, which
+#   convert_to_jpg_update_{spm,b3d} need to rewrite .png -> .jpg inside binary
+#   model files (without it, every model keeps broken .png references).
 # - subversion: used to fetch the external stk-assets repository.
 # - ccache: caches C/C++ object files so recompiling SuperTuxKart (the dominant
 #   cost of the build) is near-instant when the sources have not changed. Its
@@ -37,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libjpeg-progs \
         optipng \
         gawk \
+        bsdextrautils \
         subversion \
     && rm -rf /var/lib/apt/lists/*
 
