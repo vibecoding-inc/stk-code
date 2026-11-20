@@ -14,6 +14,8 @@
 # Environment variables:
 #   BUILD_TYPE            CMake build type, defaults to Release.
 #   STK_ASSETS_DIR        If set, the game assets in this directory are packed too.
+#   SKIP_BUILD_IF_PRESENT If set and the compiled wasm artifacts already exist
+#                         (e.g. restored from a CI cache), skip deps + wasm build.
 #   SKIP_PACK_IF_PRESENT  If set and the packed asset bundles already exist
 #                         (e.g. restored from a CI cache), skip the expensive
 #                         asset packing step.
@@ -51,11 +53,21 @@ if [ -n "${EMSDK:-}" ]; then
     ln -sfn "$EMSDK" "$WASM_DIR/emsdk"
 fi
 
-# 1. Cross-compile the third-party dependencies (cached in wasm/prefix).
-"$WASM_DIR/build_deps.sh"
+GAME_DIR="$WASM_DIR/web/game"
 
-# 2. Build SuperTuxKart itself and patch the generated JavaScript.
-"$WASM_DIR/build.sh" "$BUILD_TYPE"
+# 1-2. Cross-compile third-party dependencies (cached in wasm/prefix) and build
+#      SuperTuxKart itself + patch the generated JavaScript. Skipped when the
+#      compiled wasm artifacts were restored from cache and SKIP_BUILD_IF_PRESENT
+#      is set.
+if [ -n "${SKIP_BUILD_IF_PRESENT:-}" ] \
+    && [ -f "$GAME_DIR/supertuxkart.js" ] \
+    && [ -f "$GAME_DIR/supertuxkart.wasm" ] \
+    && [ -f "$GAME_DIR/supertuxkart.worker.js" ]; then
+    echo "Compiled wasm artifacts already present; skipping deps and wasm build."
+else
+    "$WASM_DIR/build_deps.sh"
+    "$WASM_DIR/build.sh" "$BUILD_TYPE"
+fi
 
 # 3. Provide a runtime config if none exists (config.json is gitignored).
 if [ ! -f "$WASM_DIR/web/config.json" ]; then
@@ -67,7 +79,6 @@ fi
 #    it is skipped when the bundles are already present and SKIP_PACK_IF_PRESENT
 #    is set - in CI the bundles are restored from a cache keyed on the assets
 #    revision, so this only re-runs when the assets or the packing scripts change.
-GAME_DIR="$WASM_DIR/web/game"
 if [ -n "${STK_ASSETS_DIR:-}" ]; then
     if [ -n "${SKIP_PACK_IF_PRESENT:-}" ] \
         && [ -f "$GAME_DIR/data_low.tar.gz.manifest" ] \

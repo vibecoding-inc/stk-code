@@ -42,10 +42,53 @@ jobs:
       - name: Run WASM web and worker JS tests
         run: node --test wasm/web/tests/*.test.mjs
 
+      # Cache the compiled WASM binary + patched JS keyed on all C++/CMake/build
+      # inputs. On web-only changes (wasm/web/**, wasm/worker/**, etc.) this
+      # avoids running CMake, make, and the slow Emscripten wasm-ld link step.
+      - name: Cache compiled wasm binary
+        id: wasm_bin
+        uses: actions/cache@v6
+        with:
+          path: |
+            wasm/web/game/supertuxkart.js
+            wasm/web/game/supertuxkart.wasm
+            wasm/web/game/supertuxkart.worker.js
+          key: wasm-bin-${{ hashFiles('src/**', 'lib/**', 'CMakeLists.txt', 'sources.cmake', 'cmake/**', 'wasm/build.sh', 'wasm/build_deps.sh', 'wasm/patch_js.py', 'wasm/fragments/**', 'wasm/docker/Dockerfile') }}
+
+      # Look up the current stk-assets SVN revision directly over HTTPS so we
+      # can check the packed-assets cache BEFORE building/starting Docker.
+      - name: Determine remote stk-assets revision
+        id: assets
+        run: |
+          REV="$(curl -fsSL --max-time 15 https://svn.code.sf.net/p/supertuxkart/code/stk-assets/ \
+            | sed -n 's/.*Revision \([0-9][0-9]*\):.*/\1/p' | head -n1 || true)"
+          echo "rev=${REV:-unknown}" >> "$GITHUB_OUTPUT"
+
+      # Packing re-encodes every texture/audio file at three quality levels and
+      # is one of the slowest steps. Cache the resulting bundles keyed on the
+      # assets revision and the packing scripts; on a hit, pipeline.sh skips
+      # packing (SKIP_PACK_IF_PRESENT below).
+      - name: Cache packed assets
+        id: packed_assets
+        if: steps.assets.outputs.rev != 'unknown'
+        uses: actions/cache@v6
+        with:
+          path: |
+            wasm/web/game/data_low.tar.gz.*
+            wasm/web/game/data_mid.tar.gz.*
+            wasm/web/game/data_high.tar.gz.*
+            wasm/web/game/data_version.txt
+          key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh') }}
+
+      # Only build/run the Emscripten Docker image when either the WASM binary
+      # or the packed assets missed cache. Pure web/worker changes skip Docker
+      # completely and deploy in ~30-45s.
       - name: Set up Docker Buildx
+        if: steps.wasm_bin.outputs.cache-hit != 'true' || steps.packed_assets.outputs.cache-hit != 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Build the Emscripten build image
+        if: steps.wasm_bin.outputs.cache-hit != 'true' || steps.packed_assets.outputs.cache-hit != 'true'
         uses: docker/build-push-action@v7
         with:
           context: wasm/docker
@@ -56,21 +99,18 @@ jobs:
           cache-to: type=gha,mode=max
 
       # The cross-compiled third-party libraries (wasm/prefix) are expensive to
-      # build. build_deps.sh decides what to (re)build purely from what is
-      # already installed in the prefix, so only the prefix needs to persist -
-      # the sources/objects in wasm/build are not required once the prefix is
-      # populated. The key is content-based, so this is rebuilt only when the
-      # dependency script or the build image change.
+      # build. Only needed when we have to rebuild the WASM binary.
       - name: Cache dependencies
+        if: steps.wasm_bin.outputs.cache-hit != 'true'
         uses: actions/cache@v6
         with:
           path: wasm/prefix
           key: wasm-deps-${{ hashFiles('wasm/build_deps.sh', 'wasm/docker/Dockerfile') }}
 
       # Compiler caches that make recompiling STK fast: ccache (C/C++ object
-      # files) and Emscripten's system-library/port cache. They are updated on
-      # every run, so use a unique key and fall back to the most recent cache.
+      # files) and Emscripten's system-library/port cache.
       - name: Cache compiler caches (ccache + emscripten)
+        if: steps.wasm_bin.outputs.cache-hit != 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -80,9 +120,10 @@ jobs:
           restore-keys: |
             wasm-ccache-
 
-      # The external art assets change rarely; keep the checkout warm and just
-      # svn-update it on later runs.
+      # The external art assets change rarely; only restore/fetch them when the
+      # packed-assets cache missed.
       - name: Cache stk-assets
+        if: steps.packed_assets.outputs.cache-hit != 'true'
         uses: actions/cache@v6
         with:
           path: wasm/stk-assets
@@ -91,45 +132,30 @@ jobs:
             stk-assets-
 
       - name: Fetch stk-assets
+        if: steps.packed_assets.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -v "$PWD":/src -w /src \
             "$IMAGE" wasm/get_assets.sh wasm/stk-assets
 
-      # The svn revision of the checkout keys the packed-asset cache below, so
-      # the (slow) re-encoding only runs when the assets themselves change.
-      - name: Determine stk-assets revision
-        id: assets
-        run: |
-          REV="$(docker run --rm \
-            -v "$PWD":/src -w /src \
-            "$IMAGE" svnversion wasm/stk-assets 2>/dev/null || true)"
-          echo "rev=${REV:-unknown}" >> "$GITHUB_OUTPUT"
-
-      # Packing re-encodes every texture/audio file at three quality levels and
-      # is one of the slowest steps. Cache the resulting bundles keyed on the
-      # assets revision and the packing scripts; on a hit, pipeline.sh skips
-      # packing (SKIP_PACK_IF_PRESENT below).
-      - name: Cache packed assets
-        uses: actions/cache@v6
-        with:
-          path: |
-            wasm/web/game/data_low.tar.gz.*
-            wasm/web/game/data_mid.tar.gz.*
-            wasm/web/game/data_high.tar.gz.*
-            wasm/web/game/data_version.txt
-          key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh') }}
-
       - name: Build wasm and pack assets
+        if: steps.wasm_bin.outputs.cache-hit != 'true' || steps.packed_assets.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -v "$PWD":/src -w /src \
             -e BUILD_TYPE=Release \
             -e STK_ASSETS_DIR=/src/wasm/stk-assets \
+            -e SKIP_BUILD_IF_PRESENT=1 \
             -e SKIP_PACK_IF_PRESENT=1 \
             "$IMAGE" wasm/docker/pipeline.sh
+
+      - name: Ensure runtime config.json
+        run: |
+          if [ ! -f wasm/web/config.json ]; then
+            cp wasm/web/config_example.json wasm/web/config.json
+          fi
 
       - name: Upload web root artifact
         uses: actions/upload-artifact@v7
