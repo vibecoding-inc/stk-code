@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { init_telemetry } from "../telemetry.js";
+import { init_telemetry, collect_environment_diagnostics } from "../telemetry.js";
 
 function make_console() {
   let calls = [];
@@ -491,4 +491,90 @@ test("drains pre-init __stkEarlyTelemetry queue and flushes urgent entries immed
   assert.equal(payload.entries[1].message, "Emscripten abort: boom");
 
   telemetry.dispose();
+});
+
+test("collect_environment_diagnostics reports Discord iframe, COI, WebGL2, and storage", {concurrency: false}, async () => {
+  let context_lost = false;
+  let fake_gl = {
+    VERSION: 0x1f02,
+    MAX_TEXTURE_SIZE: 0x0d33,
+    VENDOR: 0x1f00,
+    RENDERER: 0x1f01,
+    getParameter(p) {
+      if (p === 0x1f02) return "WebGL 2.0";
+      if (p === 0x0d33) return 8192;
+      if (p === 0x9245) return "TestVendor";
+      if (p === 0x9246) return "TestGPU";
+      return null;
+    },
+    getExtension(name) {
+      if (name === "WEBGL_debug_renderer_info") {
+        return {UNMASKED_VENDOR_WEBGL: 0x9245, UNMASKED_RENDERER_WEBGL: 0x9246};
+      }
+      if (name === "WEBGL_lose_context") {
+        return {loseContext() { context_lost = true; }};
+      }
+      return null;
+    },
+  };
+
+  let fake_scope = {
+    location: {search: "?frame_id=abc&instance_id=xyz"},
+    self: {},
+    top: {},
+    crossOriginIsolated: true,
+    SharedArrayBuffer: function SharedArrayBuffer() {},
+    Atomics: {},
+    WebAssembly: {},
+    indexedDB: {},
+    innerWidth: 1280,
+    innerHeight: 720,
+    devicePixelRatio: 2,
+    navigator: {
+      hardwareConcurrency: 8,
+      deviceMemory: 16,
+      platform: "Linux x86_64",
+      language: "en-US",
+      storage: {
+        async estimate() {
+          return {quota: 500 * 1024 * 1024, usage: 120 * 1024 * 1024};
+        },
+      },
+    },
+    document: {
+      createElement(tag) {
+        assert.equal(tag, "canvas");
+        return {
+          getContext(type) {
+            return type === "webgl2" ? fake_gl : null;
+          },
+        };
+      },
+    },
+  };
+
+  let diag = await collect_environment_diagnostics({global_scope: fake_scope});
+  assert.equal(diag.is_discord_activity, true);
+  assert.equal(diag.in_iframe, true);
+  assert.equal(diag.cross_origin_isolated, true);
+  assert.equal(diag.shared_array_buffer, true);
+  assert.equal(diag.hardware_concurrency, 8);
+  assert.equal(diag.device_memory_gb, 16);
+  assert.equal(diag.viewport, "1280x720");
+  assert.equal(diag.webgl2, true);
+  assert.equal(diag.webgl_vendor, "TestVendor");
+  assert.equal(diag.webgl_renderer, "TestGPU");
+  assert.equal(diag.webgl_max_texture_size, 8192);
+  assert.equal(diag.storage_quota_mb, 500);
+  assert.equal(diag.storage_usage_mb, 120);
+  assert.equal(context_lost, true);
+});
+
+test("collect_environment_diagnostics fails open on restricted environments", {concurrency: false}, async () => {
+  let diag = await collect_environment_diagnostics({global_scope: {}});
+  assert.equal(diag.is_discord_activity, false);
+  assert.equal(diag.cross_origin_isolated, false);
+  assert.equal(diag.shared_array_buffer, false);
+  assert.equal(diag.webgl2, false);
+  assert.equal(diag.storage_quota_mb, null);
 });

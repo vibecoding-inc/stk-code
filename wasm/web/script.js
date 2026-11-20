@@ -2,7 +2,7 @@ import pako from "/vendor/pako.esm.js";
 import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import { init_discord_activity } from "/discord-activity.js";
-import { init_telemetry } from "/telemetry.js";
+import { init_telemetry, collect_environment_diagnostics } from "/telemetry.js";
 
 let db = null;
 let db_name = "stk_db";
@@ -18,16 +18,106 @@ let data_version = 1;
 let start_button = document.getElementById("start_button");
 let status_text = document.getElementById("status_text");
 let info_container = document.getElementById("info_container");
-let quality_select = document.getElementById("quality_select");
+let loading_spinner = document.getElementById("loading_spinner");
+let progress_fill = document.getElementById("progress_fill");
+let progress_percent = document.getElementById("progress_percent");
+let quality_buttons = Array.from(document.querySelectorAll(".quality-btn"));
+let selected_quality = "low";
 
 let syncing_fs = false;
 let config = {};
 let create_discord_sdk = (client_id) => new DiscordSDK(client_id);
 
-// Telemetry collector handle. Initialized at the start of main() (before run())
-// so engine stdout/stderr, console output and uncaught errors are captured from
-// the earliest point script.js controls, then shipped to /api/telemetry.
+function set_loading_state({text, percent = null, indeterminate = false, spinning = true}) {
+  if (typeof text === "string" && status_text) {
+    status_text.textContent = text;
+  }
+  if (loading_spinner) {
+    loading_spinner.classList.toggle("is-hidden", !spinning);
+  }
+  if (progress_fill) {
+    progress_fill.classList.toggle("is-indeterminate", Boolean(indeterminate));
+    if (!indeterminate) {
+      let clamped = typeof percent === "number" ? Math.max(0, Math.min(100, percent)) : 0;
+      progress_fill.style.width = `${clamped}%`;
+    }
+    else {
+      progress_fill.style.width = "";
+    }
+  }
+  if (progress_percent) {
+    progress_percent.textContent =
+      !indeterminate && typeof percent === "number" ? `${Math.round(percent)}%` : "";
+  }
+}
+
+function select_quality(value) {
+  selected_quality = value;
+  for (let btn of quality_buttons) {
+    let active = btn.dataset.quality === value;
+    btn.classList.toggle("is-selected", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+  if (telemetry) {
+    telemetry.enrich({quality: selected_quality});
+  }
+}
+
+for (let btn of quality_buttons) {
+  btn.addEventListener("click", () => {
+    if (!btn.disabled && btn.dataset.quality) {
+      select_quality(btn.dataset.quality);
+    }
+  });
+}
+
+// Route credit links through Discord's openExternalLink when inside an Activity.
+for (let link of document.querySelectorAll(".credits a[href]")) {
+  link.addEventListener("click", (event) => {
+    let sdk = globalThis.discordSdk;
+    if (sdk && sdk.commands && typeof sdk.commands.openExternalLink === "function") {
+      event.preventDefault();
+      sdk.commands.openExternalLink({url: link.href}).catch(() => {});
+    }
+  });
+}
+
+// Telemetry collector handle. Initialized at module load (before waiting for
+// Emscripten's runtime to become ready) so engine stdout/stderr, console output
+// and uncaught errors are captured from the earliest point script.js controls.
 let telemetry = null;
+
+function log_lifecycle(event_name, details = {}) {
+  try {
+    if (!telemetry) return;
+    let payload = {
+      event: event_name,
+      t_ms: Math.round(performance.now()),
+      ...details,
+    };
+    telemetry.record({
+      level: "info",
+      source: "console",
+      message: `[lifecycle] ${JSON.stringify(payload)}`,
+    });
+  }
+  catch {}
+}
+
+async function emit_environment_diagnostics() {
+  try {
+    let diag = await collect_environment_diagnostics({global_scope: globalThis});
+    if (telemetry) {
+      telemetry.record({
+        level: "info",
+        source: "console",
+        message: `[env] ${JSON.stringify(diag)}`,
+      });
+      telemetry.flush();
+    }
+  }
+  catch {}
+}
 
 // Dynamic per-batch metadata: the user agent plus best-effort available-memory
 // and load-timing figures. Build/data version, quality and the Discord user id
@@ -161,8 +251,16 @@ async function download_chunks(url) {
   let filename = path.pop();
   let base_url = path.join("/");
 
-  status_text.textContent = `Downloading manifest for ${filename}...`;
+  set_loading_state({
+    text: `Downloading manifest for ${filename}...`,
+    indeterminate: true,
+    spinning: true,
+  });
+  let t0 = performance.now();
   let r1 = await fetch(url + ".manifest");
+  if (!r1.ok) {
+    throw new Error(`Failed to fetch manifest ${url}.manifest (HTTP ${r1.status})`);
+  }
   let manifest = (await r1.text()).split("\n");
   let size = parseInt(manifest.shift());
   manifest.pop();
@@ -172,42 +270,103 @@ async function download_chunks(url) {
   let array = new Uint8Array(size);
   let chunk_count = manifest.length;
   let current_chunk = 1;
+  log_lifecycle("assets_download_start", {filename, size_bytes: size, chunk_count});
 
   while (chunk = manifest.shift()) {
-    let mb_progress = Math.floor(offset / (1024 ** 2))
-    let mb_total = Math.floor(size / (1024 ** 2))
-    status_text.textContent = `Downloading ${filename}... (chunk ${current_chunk}/${chunk_count}, ${mb_progress}/${mb_total}MiB)`;
+    let mb_progress = Math.floor(offset / (1024 ** 2));
+    let mb_total = Math.floor(size / (1024 ** 2));
+    let pct = size > 0 ? (offset / size) * 100 : 0;
+    set_loading_state({
+      text: `Downloading ${filename}... (${mb_progress}/${mb_total} MiB, chunk ${current_chunk}/${chunk_count})`,
+      percent: pct,
+      indeterminate: false,
+      spinning: true,
+    });
 
     let r2 = await fetch(base_url + "/" + chunk);
+    if (!r2.ok) {
+      throw new Error(`Failed to fetch chunk ${chunk} (HTTP ${r2.status})`);
+    }
     let buffer = await r2.arrayBuffer();
     let chunk_array = new Uint8Array(buffer);
     array.set(chunk_array, offset);
-    offset += chunk_array.length;  
+    offset += chunk_array.length;
     current_chunk++;
   }
 
+  set_loading_state({
+    text: `Downloaded ${filename}`,
+    percent: 100,
+    indeterminate: false,
+    spinning: true,
+  });
+  log_lifecycle("assets_download_done", {
+    filename,
+    size_bytes: size,
+    duration_ms: Math.round(performance.now() - t0),
+  });
   return array.buffer;
 }
 
 async function extract_tar(url, fs_path, use_cache = false) {
   //download tar file from server and decompress
   let decompressed;
+  let filename = url.split("/").pop();
   if (!use_cache || !await check_db(url)) {
-    let filename = url.split("/").pop();
     let compressed = await download_chunks(url);
-    status_text.textContent = `Decompressing ${filename}...`;
+    set_loading_state({
+      text: `Decompressing ${filename}...`,
+      indeterminate: true,
+      spinning: true,
+    });
+    await wait_for_frame();
+    let t_inflate = performance.now();
     decompressed = pako.inflate(compressed);
     compressed = null;
+    log_lifecycle("assets_inflate_done", {
+      filename,
+      inflated_bytes: decompressed.length,
+      duration_ms: Math.round(performance.now() - t_inflate),
+    });
     if (use_cache) {
-      status_text.textContent = `Saving ${filename} to the cache...`;
+      set_loading_state({
+        text: `Saving ${filename} to browser cache...`,
+        indeterminate: true,
+        spinning: true,
+      });
+      await wait_for_frame();
+      let t_cache = performance.now();
       await write_db_chunks(url, decompressed);
+      log_lifecycle("assets_cache_write_done", {
+        filename,
+        duration_ms: Math.round(performance.now() - t_cache),
+      });
     }
   }
   else {
+    set_loading_state({
+      text: `Loading ${filename} from browser cache...`,
+      indeterminate: true,
+      spinning: true,
+    });
+    await wait_for_frame();
+    let t_read = performance.now();
     decompressed = await read_db_chunks(url);
+    log_lifecycle("assets_cache_hit", {
+      filename,
+      bytes: decompressed.length,
+      duration_ms: Math.round(performance.now() - t_read),
+    });
   }
 
   //read the tar file and add to emscripten's fs
+  set_loading_state({
+    text: `Unpacking game assets...`,
+    indeterminate: true,
+    spinning: true,
+  });
+  await wait_for_frame();
+  let t_untar = performance.now();
   let files = await jsUntar(decompressed.buffer);
   for (let file of files) {
     let relative_path = file.name.substring(1);
@@ -224,6 +383,11 @@ async function extract_tar(url, fs_path, use_cache = false) {
       file.buffer = null;
     }
   }
+  log_lifecycle("assets_untar_done", {
+    filename,
+    file_count: files.length,
+    duration_ms: Math.round(performance.now() - t_untar),
+  });
 }
 
 async function get_data_version() {
@@ -250,7 +414,7 @@ async function load_data() {
     await write_db("/version", version);
   }
 
-  let quality = quality_select.value;
+  let quality = selected_quality;
   let data_url = `/game/data_${quality}.tar.gz`;
   await extract_tar(data_url, "/data", true);
 }
@@ -305,7 +469,10 @@ async function main() {
   // Start capturing as early as possible so engine output (once run() fires),
   // console output and uncaught errors are all funnelled into the collector.
   init_telemetry_collector();
+  log_lifecycle("runtime_ready");
+  set_loading_state({text: "Loading configuration...", indeterminate: true, spinning: true});
   await load_config();
+  log_lifecycle("config_loaded", {ws_enabled: Boolean(config.ws_enabled)});
   // Attach build/data version and the selected texture quality now that the
   // config is loaded. get_data_version() falls back to the hard-coded version.
   try {
@@ -313,11 +480,12 @@ async function main() {
     if (telemetry) {
       telemetry.enrich({
         build_version: String(version),
-        quality: quality_select.value,
+        quality: selected_quality,
       });
     }
   }
   catch {}
+  set_loading_state({text: "Connecting...", indeterminate: true, spinning: true});
   await init_discord();
   // Attach the Discord user id when the Activity login succeeded.
   try {
@@ -325,35 +493,69 @@ async function main() {
     if (telemetry && auth && auth.user && auth.user.id) {
       telemetry.enrich({discord_user_id: String(auth.user.id)});
     }
+    log_lifecycle("discord_init_done", {authenticated: Boolean(auth && auth.user)});
   }
   catch {}
+  set_loading_state({text: "Restoring saved profile...", indeterminate: true, spinning: true});
   await load_idbfs();
+  log_lifecycle("idbfs_mounted");
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
   }
 
   start_button.onclick = start_game;
   start_button.disabled = false;
-  status_text.innerText = "";
+  set_loading_state({
+    text: "Ready to race! Choose texture quality and press Start Game.",
+    percent: 100,
+    indeterminate: false,
+    spinning: false,
+  });
+  if (telemetry) telemetry.flush();
 }
 
 async function start_game() {
-  status_text.textContent = "Loading game files...";
   start_button.disabled = true;
+  for (let btn of quality_buttons) btn.disabled = true;
+  set_loading_state({text: "Loading game files...", indeterminate: true, spinning: true});
   if (telemetry) {
-    telemetry.enrich({quality: quality_select.value});
+    telemetry.enrich({quality: selected_quality});
   }
-  await load_data();
-  await wait_for_frame();
-  status_text.textContent = "Launching game...";
+  log_lifecycle("start_clicked", {quality: selected_quality});
+  try {
+    await load_data();
+    await wait_for_frame();
+    set_loading_state({text: "Launching SuperTuxKart...", indeterminate: true, spinning: true});
 
-  await wait_for_frame();
-  run();
-  info_container.style.zIndex = 0;
-  info_container.style.display = "none";
-  sync_idbfs();
+    await wait_for_frame();
+    log_lifecycle("engine_launch", {quality: selected_quality});
+    if (telemetry) telemetry.flush();
+    run();
+    info_container.style.zIndex = 0;
+    info_container.style.display = "none";
+    sync_idbfs();
 
-  console.warn("Warning: Opening devtools may harm the game's performance.");
+    console.warn("Warning: Opening devtools may harm the game's performance.");
+  }
+  catch (err) {
+    console.error("Failed to start game:", err);
+    if (telemetry) {
+      telemetry.record({
+        level: "error",
+        source: "error",
+        message: `start_game failed: ${err && err.stack ? err.stack : String(err)}`,
+      });
+      telemetry.flush();
+    }
+    set_loading_state({
+      text: `Failed to start: ${err && err.message ? err.message : String(err)}`,
+      percent: 0,
+      indeterminate: false,
+      spinning: false,
+    });
+    start_button.disabled = false;
+    for (let btn of quality_buttons) btn.disabled = false;
+  }
 }
 
 Module["canvas"] = document.getElementById("canvas")
@@ -367,8 +569,20 @@ Module["canvas"].addEventListener("webglcontextcreationerror", (e) => {
   // to the real console so local debugging is unaffected.
   if (telemetry) {
     telemetry.record({level: "error", source: "error", message});
+    telemetry.flush();
   }
   console.error(message);
+}, false);
+Module["canvas"].addEventListener("webglcontextlost", () => {
+  if (telemetry) {
+    telemetry.record({level: "error", source: "error", message: "webglcontextlost"});
+    telemetry.flush();
+  }
+}, false);
+Module["canvas"].addEventListener("webglcontextrestored", () => {
+  if (telemetry) {
+    telemetry.record({level: "info", source: "engine", message: "webglcontextrestored"});
+  }
 }, false);
 globalThis.main = main;
 globalThis.sync_idbfs = sync_idbfs;
@@ -378,6 +592,7 @@ globalThis.load_idbfs = load_idbfs;
 // Emscripten's runtime to become ready) so any early abort or wasm-instantiate
 // failure is drained and shipped even if main() never runs.
 init_telemetry_collector();
+emit_environment_diagnostics();
 
 let runtime_ready_watchdog = setTimeout(() => {
   if (!globalThis.ready && telemetry) {

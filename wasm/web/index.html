@@ -64,59 +64,281 @@
     <script src="/script.js" type="module" defer></script>
 
     <style>
+      :root {
+        --stk-sky-top: #103b7a;
+        --stk-sky-mid: #1a5eb8;
+        --stk-sky-bot: #0b1c3d;
+        --stk-card-bg: rgba(13, 28, 58, 0.92);
+        --stk-card-border: rgba(120, 195, 255, 0.35);
+        --stk-gold: #ffd43b;
+        --stk-gold-dark: #f08c00;
+        --stk-green: #40c057;
+        --stk-green-dark: #2b8a3e;
+        --stk-blue: #339af0;
+        --stk-text: #f1f5ff;
+        --stk-muted: #b3c7e6;
+      }
       * {
-        font-family: Arial, sans-serif;
+        font-family: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
         box-sizing: border-box;
       }
-      p, label, select {
-        font-size: 12px;
-        margin: 4px;
-      }
-      body {
-        margin: 0px;
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: radial-gradient(circle at 50% 20%, var(--stk-sky-mid), var(--stk-sky-top) 48%, var(--stk-sky-bot));
+        color: var(--stk-text);
       }
       #canvas {
-        background-color: #222222;
+        background-color: #0b1c3d;
         position: absolute;
-        top: 0px;
-        left: 0px;
+        top: 0;
+        left: 0;
         z-index: 1;
         width: 100vw;
         height: 100vh;
       }
       #info_container {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 450px;
-        height: 290px;
-        margin-left: -220px;
-        margin-top: -145px;
+        position: fixed;
+        inset: 0;
         z-index: 2;
-        background-color: white;
-        padding: 12px;
-        padding-top: 6px;
-        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: radial-gradient(circle at 50% 20%, rgba(26, 94, 184, 0.88), rgba(11, 28, 61, 0.94));
+      }
+      .launcher-card {
+        width: min(94vw, 560px);
+        max-height: 92vh;
         overflow-y: auto;
+        background: var(--stk-card-bg);
+        border: 2px solid var(--stk-card-border);
+        border-radius: 18px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        overflow-x: hidden;
+      }
+      .checkered-bar {
+        height: 10px;
+        background-image:
+          linear-gradient(45deg, #ffffff 25%, transparent 25%),
+          linear-gradient(-45deg, #ffffff 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #ffffff 75%),
+          linear-gradient(-45deg, transparent 75%, #ffffff 75%);
+        background-size: 16px 16px;
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+        background-color: #141c2f;
+        opacity: 0.9;
+      }
+      .card-body {
+        padding: 20px 22px 18px;
       }
       #header_bar {
         display: flex;
         align-items: center;
-        gap: 18px;
+        gap: 14px;
+        margin-bottom: 12px;
       }
-      #status_bar {
+      #header_bar img {
+        width: 56px;
+        height: 56px;
+        flex-shrink: 0;
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+      }
+      .title-group h1 {
+        margin: 0;
+        font-size: clamp(22px, 4.5vw, 28px);
+        font-weight: 800;
+        letter-spacing: 0.3px;
+        color: var(--stk-gold);
+        text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+      }
+      .title-subtitle {
+        margin: 2px 0 0;
+        font-size: 13px;
+        color: var(--stk-muted);
+      }
+      .section-label {
+        margin: 14px 0 8px;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: #d7e6ff;
+      }
+      .quality-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .quality-btn {
+        appearance: none;
+        cursor: pointer;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        margin-top: 12px;
-        gap: 6px;
+        justify-content: center;
+        gap: 4px;
+        padding: 14px 10px;
+        min-height: 78px;
+        border-radius: 12px;
+        border: 2px solid rgba(130, 185, 255, 0.28);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--stk-text);
+        transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+      }
+      .quality-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        border-color: rgba(255, 212, 59, 0.75);
+        background: rgba(51, 154, 240, 0.22);
+      }
+      .quality-btn.is-selected {
+        border-color: var(--stk-gold);
+        background: linear-gradient(180deg, rgba(51, 154, 240, 0.42), rgba(24, 100, 171, 0.58));
+        box-shadow: 0 0 0 2px rgba(255, 212, 59, 0.35), 0 8px 18px rgba(0, 0, 0, 0.35);
+      }
+      .quality-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      .quality-name {
+        font-size: 16px;
+        font-weight: 800;
+      }
+      .quality-size {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--stk-gold);
+      }
+      .quality-hint {
+        font-size: 11px;
+        color: var(--stk-muted);
       }
       #start_button {
+        width: 100%;
+        margin-top: 16px;
+        padding: 15px 18px;
         border: none;
-        outline: none;
-        padding: 8px;
-        padding-left: 12px;
-        padding-right: 12px;
-        border-radius: 8px;
+        border-radius: 12px;
+        cursor: pointer;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #ffffff;
+        background: linear-gradient(180deg, var(--stk-green), var(--stk-green-dark));
+        box-shadow: 0 5px 0 #1b5e2a, 0 10px 20px rgba(0, 0, 0, 0.38);
+        transition: transform 0.1s ease, filter 0.12s ease;
+      }
+      #start_button:hover:not(:disabled) {
+        filter: brightness(1.08);
+        transform: translateY(-1px);
+      }
+      #start_button:active:not(:disabled) {
+        transform: translateY(2px);
+        box-shadow: 0 2px 0 #1b5e2a, 0 4px 10px rgba(0, 0, 0, 0.35);
+      }
+      #start_button:disabled {
+        cursor: not-allowed;
+        filter: grayscale(0.45);
+        opacity: 0.72;
+        box-shadow: 0 3px 0 #1d2d44;
+      }
+      .progress-panel {
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: rgba(6, 15, 34, 0.65);
+        border: 1px solid rgba(120, 195, 255, 0.22);
+      }
+      .progress-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        border: 2.5px solid rgba(255, 212, 59, 0.25);
+        border-top-color: var(--stk-gold);
+        animation: stk-spin 0.8s linear infinite;
+      }
+      .spinner.is-hidden {
+        display: none;
+      }
+      #status_text {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--stk-text);
+        flex: 1;
+      }
+      #progress_percent {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--stk-gold);
+        min-width: 38px;
+        text-align: right;
+      }
+      .progress-track {
+        margin-top: 8px;
+        height: 10px;
+        width: 100%;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--stk-gold-dark), var(--stk-gold), #ffe066);
+        transition: width 0.2s ease;
+      }
+      .progress-fill.is-indeterminate {
+        width: 42%;
+        animation: stk-slide 1.1s ease-in-out infinite;
+      }
+      .credits {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid rgba(120, 195, 255, 0.18);
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: var(--stk-muted);
+      }
+      .credits p {
+        margin: 3px 0;
+      }
+      .credits a {
+        color: #74c0fc;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .credits a:hover {
+        text-decoration: underline;
+      }
+      @keyframes stk-spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes stk-slide {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(260%); }
+      }
+      @media (max-width: 460px) {
+        .quality-grid {
+          grid-template-columns: 1fr;
+        }
+        .quality-btn {
+          min-height: 54px;
+          flex-direction: row;
+          justify-content: space-between;
+          padding: 12px 14px;
+        }
       }
     </style>
   </head>
@@ -124,23 +346,59 @@
   <body>
     <canvas id="canvas"></canvas>
     <div id="info_container">
-      <div id="header_bar">
-        <img src="/supertuxkart_64.png">
-        <h1 style="margin: 0px;">SuperTuxKart Wasm</h1>
-      </div>
-      <p>This is an experimental port of SuperTuxKart to the browser using WebAssembly and Emscripten. Currently, everything works except for some rendering APIs and networking.</p>
-      <p>There is a 120MB initial download required to play, and the game will require around 500MB of memory.</p>
-      <p>This web port was made by <a href="https://github.com/ading2210/">ading2210</a>, and the source code is located at <a href="https://github.com/ading2210/stk-code/tree/wasm">github.com/ading2210/stk-code</a>.</p>  
-      <p>If you want to check on the status of this port, take a look at the <a href="https://github.com/supertuxkart/stk-code/pull/5106/">corresponding pull request</a> in the SuperTuxKart repository.</p>
-      <label for="quality_select">Texture quality:</label>
-      <select name="quality_select" id="quality_select" style="margin: 0px;">
-        <option value="low">Low (120MiB)</option>
-        <option value="mid">Medium (171MiB)</option>
-        <option value="high">High (249MiB)</option>
-      </select> 
-      <div id="status_bar">
-        <button id="start_button" disabled>Start Game</button>
-        <p id="status_text">Loading game code...</p>
+      <div class="launcher-card">
+        <div class="checkered-bar"></div>
+        <div class="card-body">
+          <div id="header_bar">
+            <img src="/supertuxkart_64.png" alt="SuperTuxKart">
+            <div class="title-group">
+              <h1>SuperTuxKart</h1>
+              <p class="title-subtitle">WebAssembly Edition &bull; ~500 MiB RAM required</p>
+            </div>
+          </div>
+
+          <p class="section-label">Choose Texture Quality</p>
+          <div class="quality-grid" role="radiogroup" aria-label="Texture quality">
+            <button type="button" class="quality-btn is-selected" data-quality="low" aria-pressed="true">
+              <span class="quality-name">Low</span>
+              <span class="quality-size">120 MiB</span>
+              <span class="quality-hint">Fastest load</span>
+            </button>
+            <button type="button" class="quality-btn" data-quality="mid" aria-pressed="false">
+              <span class="quality-name">Medium</span>
+              <span class="quality-size">171 MiB</span>
+              <span class="quality-hint">Balanced</span>
+            </button>
+            <button type="button" class="quality-btn" data-quality="high" aria-pressed="false">
+              <span class="quality-name">High</span>
+              <span class="quality-size">249 MiB</span>
+              <span class="quality-hint">Sharpest</span>
+            </button>
+          </div>
+
+          <button id="start_button" type="button" disabled>Start Game</button>
+
+          <div class="progress-panel" id="progress_panel">
+            <div class="progress-row">
+              <div class="spinner" id="loading_spinner" aria-hidden="true"></div>
+              <p id="status_text">Loading WebAssembly engine...</p>
+              <span id="progress_percent"></span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill is-indeterminate" id="progress_fill"></div>
+            </div>
+          </div>
+
+          <div class="credits">
+            <p>
+              Based on <a href="https://supertuxkart.net/" target="_blank" rel="noopener noreferrer">SuperTuxKart</a>.
+              WebAssembly port originally created by <a href="https://github.com/ading2210/" target="_blank" rel="noopener noreferrer">ading2210</a>
+              (<a href="https://github.com/ading2210/stk-code/tree/wasm" target="_blank" rel="noopener noreferrer">source</a>,
+              <a href="https://github.com/supertuxkart/stk-code/pull/5106/" target="_blank" rel="noopener noreferrer">PR #5106</a>).
+            </p>
+            <p>Experimental browser build: assets are cached locally after the first download.</p>
+          </div>
+        </div>
       </div>
     </div>
   </body>

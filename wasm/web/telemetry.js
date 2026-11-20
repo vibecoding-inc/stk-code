@@ -421,3 +421,106 @@ export function init_telemetry({
     dispose,
   };
 }
+
+// Gather browser, iframe/Discord, threading, WebGL, and storage diagnostics
+// using a temporary detached canvas (so the game's #canvas is never touched).
+// Always fail-open: returns whatever subset of fields could be read.
+export async function collect_environment_diagnostics({global_scope} = {}) {
+  let scope = global_scope || (typeof globalThis !== "undefined" ? globalThis : {});
+  let nav = scope.navigator || {};
+  let loc = scope.location || {};
+  let doc = scope.document || null;
+
+  let is_discord_activity = false;
+  try {
+    is_discord_activity = new URLSearchParams(loc.search || "").has("frame_id");
+  }
+  catch {}
+
+  let in_iframe = false;
+  try {
+    in_iframe = Boolean(scope.self && scope.top && scope.self !== scope.top);
+  }
+  catch {
+    // Cross-origin access to window.top throws -> definitely inside an iframe.
+    in_iframe = true;
+  }
+
+  let diag = {
+    is_discord_activity,
+    in_iframe,
+    cross_origin_isolated: scope.crossOriginIsolated === true,
+    shared_array_buffer: typeof scope.SharedArrayBuffer !== "undefined",
+    atomics: typeof scope.Atomics !== "undefined",
+    webassembly: typeof scope.WebAssembly !== "undefined",
+    indexed_db: typeof scope.indexedDB !== "undefined",
+    hardware_concurrency: typeof nav.hardwareConcurrency === "number" ? nav.hardwareConcurrency : null,
+    device_memory_gb: typeof nav.deviceMemory === "number" ? nav.deviceMemory : null,
+    platform: typeof nav.platform === "string" ? nav.platform : null,
+    language: typeof nav.language === "string" ? nav.language : null,
+    viewport:
+      typeof scope.innerWidth === "number" && typeof scope.innerHeight === "number"
+        ? `${scope.innerWidth}x${scope.innerHeight}`
+        : null,
+    dpr: typeof scope.devicePixelRatio === "number" ? scope.devicePixelRatio : null,
+    webgl2: false,
+    webgl1: false,
+    webgl_vendor: null,
+    webgl_renderer: null,
+    webgl_version: null,
+    webgl_max_texture_size: null,
+    storage_quota_mb: null,
+    storage_usage_mb: null,
+  };
+
+  try {
+    if (doc && typeof doc.createElement === "function") {
+      let probe = doc.createElement("canvas");
+      let gl = probe && typeof probe.getContext === "function" ? probe.getContext("webgl2") : null;
+      if (gl) {
+        diag.webgl2 = true;
+      }
+      else if (probe && typeof probe.getContext === "function") {
+        gl = probe.getContext("webgl");
+        if (gl) diag.webgl1 = true;
+      }
+      if (gl) {
+        try {
+          diag.webgl_version = gl.getParameter(gl.VERSION) || null;
+          diag.webgl_max_texture_size = gl.getParameter(gl.MAX_TEXTURE_SIZE) || null;
+          let dbg = typeof gl.getExtension === "function" ? gl.getExtension("WEBGL_debug_renderer_info") : null;
+          if (dbg) {
+            diag.webgl_vendor = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) || null;
+            diag.webgl_renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || null;
+          }
+          else {
+            diag.webgl_vendor = gl.getParameter(gl.VENDOR) || null;
+            diag.webgl_renderer = gl.getParameter(gl.RENDERER) || null;
+          }
+        }
+        catch {}
+        try {
+          let lose = typeof gl.getExtension === "function" ? gl.getExtension("WEBGL_lose_context") : null;
+          if (lose && typeof lose.loseContext === "function") lose.loseContext();
+        }
+        catch {}
+      }
+    }
+  }
+  catch {}
+
+  try {
+    if (nav.storage && typeof nav.storage.estimate === "function") {
+      let est = await nav.storage.estimate();
+      if (est && typeof est.quota === "number") {
+        diag.storage_quota_mb = Math.round(est.quota / (1024 * 1024));
+      }
+      if (est && typeof est.usage === "number") {
+        diag.storage_usage_mb = Math.round(est.usage / (1024 * 1024));
+      }
+    }
+  }
+  catch {}
+
+  return diag;
+}
