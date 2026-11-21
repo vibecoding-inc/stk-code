@@ -130,7 +130,8 @@ pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
             Duration::from_secs(10),
             lease.ready_rx.wait_for(|ready| *ready),
         )
-        .await;
+        .await
+        .map(|r| r.map(|_| ()));
         match wait_res {
             Ok(Ok(_)) => {
                 info!(
