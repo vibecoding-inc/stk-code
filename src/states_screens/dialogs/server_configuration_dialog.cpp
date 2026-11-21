@@ -31,6 +31,8 @@
 
 using namespace GUIEngine;
 
+int ServerConfigurationDialog::m_last_ai_karts = 0;
+
 // ----------------------------------------------------------------------------
 void ServerConfigurationDialog::beforeAddingWidgets()
 {
@@ -38,6 +40,8 @@ void ServerConfigurationDialog::beforeAddingWidgets()
     assert(m_more_options_text != NULL);
     m_more_options_spinner = getWidget<SpinnerWidget>("more-options-spinner");
     assert(m_more_options_spinner != NULL);
+    m_ai_karts_spinner = getWidget<SpinnerWidget>("ai-karts-spinner");
+    assert(m_ai_karts_spinner != NULL);
 
     m_options_widget = getWidget<RibbonWidget>("options");
     assert(m_options_widget != NULL);
@@ -66,6 +70,9 @@ void ServerConfigurationDialog::init()
     gamemode->setSelection(m_prev_mode, PLAYER_ID_GAME_MASTER);
 
     updateMoreOption(m_prev_mode);
+    m_ai_karts_spinner->setMin(0);
+    m_ai_karts_spinner->setMax(8);
+    m_ai_karts_spinner->setValue(m_last_ai_karts);
     m_options_widget->setFocusForPlayer(PLAYER_ID_GAME_MASTER);
     m_options_widget->select("cancel", PLAYER_ID_GAME_MASTER);
 }   // init
@@ -122,6 +129,11 @@ GUIEngine::EventPropagation
                     break;
                 }
             }
+            int ai_karts = m_ai_karts_spinner->getValue();
+            if (ai_karts < 0) ai_karts = 0;
+            if (ai_karts > 8) ai_karts = 8;
+            m_last_ai_karts = ai_karts;
+            change.addUInt8((uint8_t)ai_karts);
             STKHost::get()->sendToServer(&change, true);
             return GUIEngine::EVENT_BLOCK;
         }

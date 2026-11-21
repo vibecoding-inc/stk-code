@@ -3917,6 +3917,13 @@ void ServerLobby::handleServerConfiguration(Event* event)
     int new_difficulty = data.getUInt8();
     int new_game_mode = data.getUInt8();
     bool new_soccer_goal_target = data.getUInt8() == 1;
+    int new_ai_karts = -1;
+    if (data.size() > 0)
+    {
+        new_ai_karts = data.getUInt8();
+        if (new_ai_karts > 8)
+            new_ai_karts = 8;
+    }
     auto modes = ServerConfig::getLocalGameMode(new_game_mode);
     if (modes.second == RaceManager::MAJOR_MODE_GRAND_PRIX)
     {
@@ -3950,6 +3957,13 @@ void ServerLobby::handleServerConfiguration(Event* event)
     }
     m_difficulty.store(new_difficulty);
     m_game_mode.store(new_game_mode);
+    if (new_ai_karts >= 0)
+    {
+        // Signal the Discord Activity Rust gateway to spawn/resize/stop the
+        // headless --network-ai bot process for this room.
+        printf("STK_GATEWAY_SET_AI=%d\n", new_ai_karts);
+        fflush(stdout);
+    }
     updateTracksForMode();
 
     auto peers = STKHost::get()->getPeers();

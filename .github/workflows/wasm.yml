@@ -77,7 +77,7 @@ jobs:
             wasm/web/game/data_mid.tar.gz.*
             wasm/web/game/data_high.tar.gz.*
             wasm/web/game/data_version.txt
-          key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh', 'wasm/docker/Dockerfile') }}
+          key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh', 'data/gui/**', 'wasm/docker/Dockerfile') }}
 
       # Only build/run the Emscripten Docker image when either the WASM binary
       # or the packed assets missed cache. Pure web/worker changes skip Docker

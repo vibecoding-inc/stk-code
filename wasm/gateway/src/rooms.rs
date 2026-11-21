@@ -6,9 +6,17 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{oneshot, watch, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{info, info_span, warn, Instrument};
+
+pub fn parse_set_ai_command(line: &str) -> Option<u8> {
+    let idx = line.find("STK_GATEWAY_SET_AI=")?;
+    let rest = &line[idx + "STK_GATEWAY_SET_AI=".len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let count: u8 = digits.parse().ok()?;
+    Some(count.min(8))
+}
 
 pub struct SpawnedRoom {
     pub process: Box<dyn RoomProcess>,
@@ -22,10 +30,13 @@ pub trait RoomProcess: Send + Sync {
 pub struct StkChildProcess {
     child: Child,
     config_path: PathBuf,
+    ai_cmd_tx: Option<mpsc::UnboundedSender<u8>>,
 }
 
 impl RoomProcess for StkChildProcess {
     fn kill_and_cleanup(&mut self) {
+        // Dropping `ai_cmd_tx` signals the AI supervisor task to kill any bot process.
+        self.ai_cmd_tx.take();
         let _ = self.child.start_kill();
         let _ = std::fs::remove_file(&self.config_path);
     }
@@ -61,9 +72,10 @@ impl StkServerSpawner {
     <wan-server value="false" />
     <enable-console value="false" />
     <server-max-players value="{max_players}" />
-    <owner-less value="true" />
-    <start-game-counter value="30.0" />
-    <min-start-game-players value="2" />
+    <owner-less value="false" />
+    <server-configurable value="true" />
+    <ai-handling value="true" />
+    <ai-anywhere value="true" />
     <auto-end value="false" />
     <sql-management value="false" />
     <strict-players value="false" />
@@ -100,11 +112,64 @@ impl ServerSpawner for StkServerSpawner {
         })?;
 
         let (ready_tx, ready_rx) = watch::channel(false);
+        let (ai_cmd_tx, mut ai_cmd_rx) = mpsc::unbounded_channel::<u8>();
         let span = info_span!("stk_room", instance_id = %instance_id, port = port);
+
+        // Supervise the optional headless `--network-ai=<n>` bot client for this room.
+        let ai_bin = self.stk_binary.clone();
+        let ai_data_dir = self.stk_data_dir.clone();
+        let ai_span = span.clone();
+        tokio::spawn(
+            async move {
+                let mut ai_child: Option<Child> = None;
+                let mut current_ai: u8 = 0;
+                while let Some(requested) = ai_cmd_rx.recv().await {
+                    if requested == current_ai {
+                        continue;
+                    }
+                    if let Some(mut existing) = ai_child.take() {
+                        info!(prev_ai = current_ai, "stopping previous STK AI bot client");
+                        let _ = existing.start_kill();
+                        let _ = existing.wait().await;
+                    }
+                    current_ai = requested;
+                    if requested == 0 {
+                        continue;
+                    }
+                    let mut ai_cmd = Command::new(&ai_bin);
+                    ai_cmd
+                        .arg(format!("--connect-now=127.0.0.1:{port}"))
+                        .arg(format!("--network-ai={requested}"))
+                        .arg("--no-console-log")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .kill_on_drop(true);
+                    if let Some(dir) = &ai_data_dir {
+                        ai_cmd.env("SUPERTUXKART_DATADIR", dir);
+                    }
+                    match ai_cmd.spawn() {
+                        Ok(c) => {
+                            info!(ai_karts = requested, pid = ?c.id(), "spawned STK AI bot client");
+                            ai_child = Some(c);
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "failed to spawn STK AI bot client");
+                            current_ai = 0;
+                        }
+                    }
+                }
+                if let Some(mut existing) = ai_child.take() {
+                    let _ = existing.start_kill();
+                }
+            }
+            .instrument(ai_span),
+        );
 
         if let Some(stdout) = child.stdout.take() {
             let stdout_span = span.clone();
             let ready_tx_out = ready_tx.clone();
+            let ai_tx_out = ai_cmd_tx.clone();
             tokio::spawn(
                 async move {
                     let mut lines = BufReader::new(stdout).lines();
@@ -112,6 +177,9 @@ impl ServerSpawner for StkServerSpawner {
                         if !line.trim().is_empty() {
                             if line.contains("Listening has been started") {
                                 let _ = ready_tx_out.send(true);
+                            }
+                            if let Some(ai_count) = parse_set_ai_command(&line) {
+                                let _ = ai_tx_out.send(ai_count);
                             }
                             info!(stream = "stdout", "{line}");
                         }
@@ -144,7 +212,11 @@ impl ServerSpawner for StkServerSpawner {
         info!(pid = ?child.id(), config = %config_path.display(), "spawned headless STK server");
 
         Ok(SpawnedRoom {
-            process: Box::new(StkChildProcess { child, config_path }),
+            process: Box::new(StkChildProcess {
+                child,
+                config_path,
+                ai_cmd_tx: Some(ai_cmd_tx),
+            }),
             ready_rx,
         })
     }
@@ -391,6 +463,14 @@ mod tests {
                 ready_rx,
             })
         }
+    }
+
+    #[test]
+    fn parses_set_ai_control_line() {
+        assert_eq!(parse_set_ai_command("STK_GATEWAY_SET_AI=4"), Some(4));
+        assert_eq!(parse_set_ai_command("prefix STK_GATEWAY_SET_AI=0\r"), Some(0));
+        assert_eq!(parse_set_ai_command("STK_GATEWAY_SET_AI=99"), Some(8));
+        assert_eq!(parse_set_ai_command("normal log line"), None);
     }
 
     #[tokio::test]

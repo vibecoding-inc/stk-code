@@ -40,6 +40,10 @@ private:
 
     GUIEngine::LabelWidget* m_more_options_text;
 
+    GUIEngine::SpinnerWidget* m_ai_karts_spinner;
+
+    static int m_last_ai_karts;
+
     GUIEngine::RibbonWidget* m_difficulty_widget;
     GUIEngine::RibbonWidget* m_game_mode_widget;
     GUIEngine::RibbonWidget* m_options_widget;
