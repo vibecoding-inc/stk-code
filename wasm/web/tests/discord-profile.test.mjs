@@ -41,11 +41,12 @@ test("build_players_xml sets current player and profile to the Discord username"
   assert.match(xml, /<\/players>/);
 });
 
-test("build_config_xml enables internet permission and skips login screen prompt", () => {
+test("build_config_xml enables internet permission, skips login screen prompt, and unlocks everything", () => {
   let xml = build_config_xml();
   assert.match(xml, /<stkconfig version="8" >/);
   assert.match(xml, /<enable_internet value="1" \/>/);
   assert.match(xml, /<always_show_login_screen value="false" \/>/);
+  assert.match(xml, /<unlock_everything value="2" \/>/);
 });
 
 test("resolve_stk_config_dir matches FileManager::checkAndCreateConfigDir precedence", () => {

@@ -55,6 +55,7 @@ export function build_config_xml() {
     '<stkconfig version="8" >',
     '    <enable_internet value="1" />',
     '    <always_show_login_screen value="false" />',
+    '    <unlock_everything value="2" />',
     '</stkconfig>',
     '',
   ].join("\n");
