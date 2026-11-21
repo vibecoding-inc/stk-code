@@ -145,6 +145,11 @@ pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
                     room_port = lease.port,
                     "STK server exited before becoming ready"
                 );
+                ctx.rooms
+                    .leave(&lease.instance_id, &lease.user_id, lease.conn_id)
+                    .await;
+                send_handshake_error(&mut ws, "server_start_failed").await;
+                return;
             }
             Err(_) => {
                 warn!(

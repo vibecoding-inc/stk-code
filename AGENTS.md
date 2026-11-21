@@ -1,6 +1,8 @@
 # AGENTS.md — SuperTuxKart WASM / Discord Activity Fork
 
-This repository is a fork of **SuperTuxKart** (branch `wasm`, originally based on upstream [PR #5106](https://github.com/supertuxkart/stk-code/pull/5106) by `ading2210`) with the end goal of running **SuperTuxKart as a Discord Activity** in WebAssembly, hosted on Cloudflare Workers (`https://supertuxkart-wasm.profiluefter.workers.dev/`).
+This repository is a fork of **SuperTuxKart** (branch `wasm`, originally based on upstream [PR #5106](https://github.com/supertuxkart/stk-code/pull/5106) by `ading2210`) **dedicated exclusively to running SuperTuxKart as a Discord Activity** (WASM browser client hosted on Cloudflare Workers + headless `-DSERVER_ONLY=ON` gameserver behind the Rust gateway).
+
+- **Scope & Freedom to Modify:** This fork will **never** be compiled as a standard desktop client and does **not** need upstream/desktop backwards compatibility. Only the **WASM client** and **headless gameserver** matter — we are free to modify STK's C++ code, GUI `.stkgui` screens, and network protocols directly to deliver the best Discord Activity experience.
 
 ---
 
