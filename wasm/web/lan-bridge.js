@@ -29,11 +29,14 @@ export function create_lan_bridge({
 }) {
   let ws = null;
   let ready = false;
+  let preconnected = false;
   let active_sockets = new Set();
   let rx_queue = [];
   let tx_pending = [];
   let ready_waiters = [];
   let status_listeners = [];
+  let tx_logged = false;
+  let rx_logged = false;
 
   function emit_status(status) {
     for (let fn of status_listeners) {
@@ -152,6 +155,10 @@ export function create_lan_bridge({
           bytes = event.data;
         }
         if (bytes && bytes.length > 0) {
+          if (!rx_logged) {
+            rx_logged = true;
+            logger.log(`[lan-bridge] received first ENet datagram (${bytes.length} bytes)`);
+          }
           if (rx_queue.length >= MAX_RX_QUEUE) {
             rx_queue.shift();
           }
@@ -184,6 +191,7 @@ export function create_lan_bridge({
     if (!isAvailable()) {
       return Promise.reject(new Error("Discord Activity multiplayer is not available."));
     }
+    preconnected = true;
     if (ready && ws && ws.readyState === 1) {
       if (typeof on_status === "function") on_status("ready");
       return Promise.resolve();
@@ -219,7 +227,9 @@ export function create_lan_bridge({
 
   function close(sock_id) {
     active_sockets.delete(sock_id);
-    if (active_sockets.size === 0 && ws) {
+    // Keep a preconnected WebSocket open across STK's brief startup probe
+    // sockets (NetworkConfig creates/destroys probe sockets before STKHost).
+    if (active_sockets.size === 0 && ws && !preconnected) {
       try {
         ws.close();
       }
@@ -237,6 +247,10 @@ export function create_lan_bridge({
     let heap = get_heap_u8();
     if (!heap) return -1;
     let payload = heap.slice(ptr, ptr + len);
+    if (!tx_logged) {
+      tx_logged = true;
+      logger.log(`[lan-bridge] sending first ENet datagram (${len} bytes, ready=${ready})`);
+    }
     if (ws && ready && ws.readyState === 1) {
       try {
         ws.send(payload);

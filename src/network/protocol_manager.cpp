@@ -38,6 +38,9 @@
 
 // ============================================================================
 std::weak_ptr<ProtocolManager> ProtocolManager::m_protocol_manager[PT_COUNT];
+#ifdef __EMSCRIPTEN__
+std::shared_ptr<ProtocolManager> ProtocolManager::m_em_protocol_manager[PT_COUNT];
+#endif
 // ============================================================================
 std::shared_ptr<ProtocolManager> ProtocolManager::createInstance()
 {
@@ -105,6 +108,9 @@ std::shared_ptr<ProtocolManager> ProtocolManager::createInstance()
     }
 #endif
     m_protocol_manager[pt] = pm;
+#ifdef __EMSCRIPTEN__
+    m_em_protocol_manager[pt] = pm;
+#endif
     return pm;
 }   // createInstance
 
@@ -162,7 +168,9 @@ void ProtocolManager::OneProtocolType::abort()
 void ProtocolManager::abort()
 {
     m_exit.store(true);
-#ifndef __EMSCRIPTEN__
+#ifdef __EMSCRIPTEN__
+    m_em_protocol_manager[STKProcess::getType()].reset();
+#else
     if (NetworkConfig::get()->isServer())
     {
         std::unique_lock<std::mutex> ul(m_game_protocol_mutex);

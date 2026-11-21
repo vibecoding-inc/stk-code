@@ -176,6 +176,11 @@ private:
 
     /*! Single instance of protocol manager.*/
     static std::weak_ptr<ProtocolManager> m_protocol_manager[PT_COUNT];
+#ifdef __EMSCRIPTEN__
+    /** Strong reference keeping ProtocolManager alive on single-threaded WASM
+     *  (normally owned by the m_asynchronous_update_thread lambda). */
+    static std::shared_ptr<ProtocolManager> m_em_protocol_manager[PT_COUNT];
+#endif
 
     bool sendEvent(Event* event,
                    std::array<OneProtocolType, PROTOCOL_MAX>& protocols);
