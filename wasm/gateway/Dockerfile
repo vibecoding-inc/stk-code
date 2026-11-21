@@ -48,21 +48,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /assets
 COPY data ./data
 
-# Fetch karts, tracks, library, models, and textures/materials.xml from stk-assets
-# and strip client-only textures/audio to keep the server image compact while
-# keeping all directories FileManager requires on startup.
+# Fetch karts, tracks, library, models, music, sfx, and textures/materials.xml
+# from stk-assets and strip client-only textures/audio binaries so the server
+# image stays compact while keeping all XML metadata (e.g. sfx.xml, *.music,
+# materials.xml) that headless STK validates on startup.
 RUN mkdir -p ./data/karts ./data/tracks ./data/library ./data/models ./data/textures ./data/music ./data/sfx \
     && svn export --force --non-interactive "${STK_ASSETS_URL}/karts" ./data/karts \
     && svn export --force --non-interactive "${STK_ASSETS_URL}/tracks" ./data/tracks \
     && svn export --force --non-interactive "${STK_ASSETS_URL}/library" ./data/library \
     && svn export --force --non-interactive "${STK_ASSETS_URL}/models" ./data/models \
+    && svn export --force --non-interactive "${STK_ASSETS_URL}/music" ./data/music \
+    && svn export --force --non-interactive "${STK_ASSETS_URL}/sfx" ./data/sfx \
     && svn export --force --non-interactive "${STK_ASSETS_URL}/textures/materials.xml" ./data/textures/materials.xml \
-    && find ./data/karts ./data/tracks ./data/library ./data/models -type f \
+    && find ./data/karts ./data/tracks ./data/library ./data/models ./data/music ./data/sfx -type f \
         \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \
            -o -iname '*.ogg' -o -iname '*.wav' -o -iname '*.opus' \
            -o -iname '*.ttf' -o -iname '*.otf' -o -iname '*.xcf' \) \
-        -delete \
-    && rm -rf ./data/music/* ./data/sfx/*
+        -delete
 
 # ---------------------------------------------------------------------------
 # Stage 3: Build Rust WebSocket-to-UDP Gateway & Room Orchestrator
