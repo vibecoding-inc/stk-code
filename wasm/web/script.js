@@ -83,9 +83,16 @@ for (let btn of quality_buttons) {
 for (let link of document.querySelectorAll(".credits a[href]")) {
   link.addEventListener("click", (event) => {
     let sdk = globalThis.discordSdk;
+    let in_discord = new URLSearchParams(window.location.search).has("frame_id");
     if (sdk && sdk.commands && typeof sdk.commands.openExternalLink === "function") {
       event.preventDefault();
-      sdk.commands.openExternalLink({url: link.href}).catch(() => {});
+      sdk.commands.openExternalLink({url: link.href}).catch((err) => {
+        console.warn("Discord openExternalLink failed:", err);
+      });
+    }
+    else if (in_discord) {
+      event.preventDefault();
+      console.warn("Discord SDK not ready yet; cannot open external link:", link.href);
     }
   });
 }

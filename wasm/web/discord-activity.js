@@ -17,6 +17,7 @@ export async function init_discord_activity({
 
     let discord_sdk = create_discord_sdk(config.discord_client_id);
     await discord_sdk.ready();
+    global_scope.discordSdk = discord_sdk;
 
     let {code} = await discord_sdk.commands.authorize({
       client_id: config.discord_client_id,
