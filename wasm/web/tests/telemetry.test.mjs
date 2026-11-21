@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { init_telemetry, collect_environment_diagnostics } from "../telemetry.js";
+import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "../telemetry.js";
 
 function make_console() {
   let calls = [];
@@ -577,4 +577,70 @@ test("collect_environment_diagnostics fails open on restricted environments", {c
   assert.equal(diag.shared_array_buffer, false);
   assert.equal(diag.webgl2, false);
   assert.equal(diag.storage_quota_mb, null);
+});
+
+test("recommend_quality selects high, mid, or low based on device capabilities", {concurrency: false}, () => {
+  // Strong desktop (like Discord desktop on Linux/Windows/macOS) -> high
+  assert.equal(recommend_quality({
+    is_mobile: false,
+    webgl2: true,
+    webgl_renderer: "ANGLE (Intel, Mesa Intel(R) Graphics (MTL), OpenGL ES 3.2)",
+    webgl_max_texture_size: 16384,
+    hardware_concurrency: 22,
+    device_memory_gb: 32,
+    storage_quota_mb: 622741,
+  }), "high");
+
+  // Desktop without navigator.deviceMemory (e.g. Firefox/Safari) -> high on >=8 cores, mid on 4 cores
+  assert.equal(recommend_quality({
+    is_mobile: false,
+    webgl2: true,
+    webgl_renderer: "Apple GPU",
+    webgl_max_texture_size: 16384,
+    hardware_concurrency: 8,
+    device_memory_gb: null,
+    storage_quota_mb: 5000,
+  }), "high");
+  assert.equal(recommend_quality({
+    is_mobile: false,
+    webgl2: true,
+    webgl_renderer: "Intel UHD",
+    webgl_max_texture_size: 8192,
+    hardware_concurrency: 4,
+    device_memory_gb: null,
+    storage_quota_mb: 5000,
+  }), "mid");
+
+  // Mobile, software renderer, low RAM, tight storage, or empty diag -> low
+  assert.equal(recommend_quality({
+    is_mobile: true,
+    webgl2: true,
+    webgl_max_texture_size: 8192,
+    hardware_concurrency: 8,
+    device_memory_gb: 8,
+  }), "low");
+  assert.equal(recommend_quality({
+    is_mobile: false,
+    webgl2: true,
+    webgl_renderer: "Google SwiftShader",
+    webgl_max_texture_size: 8192,
+    hardware_concurrency: 16,
+    device_memory_gb: 32,
+  }), "low");
+  assert.equal(recommend_quality({
+    is_mobile: false,
+    webgl2: true,
+    hardware_concurrency: 8,
+    device_memory_gb: 4,
+    webgl_max_texture_size: 8192,
+  }), "low");
+  assert.equal(recommend_quality({
+    is_mobile: false,
+    webgl2: true,
+    hardware_concurrency: 8,
+    device_memory_gb: 16,
+    webgl_max_texture_size: 8192,
+    storage_quota_mb: 400,
+  }), "low");
+  assert.equal(recommend_quality(null), "low");
 });

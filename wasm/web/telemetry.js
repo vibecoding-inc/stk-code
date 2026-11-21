@@ -446,9 +446,21 @@ export async function collect_environment_diagnostics({global_scope} = {}) {
     in_iframe = true;
   }
 
+  let is_mobile = false;
+  try {
+    if (nav.userAgentData && typeof nav.userAgentData.mobile === "boolean") {
+      is_mobile = nav.userAgentData.mobile;
+    }
+    else if (typeof nav.userAgent === "string") {
+      is_mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent);
+    }
+  }
+  catch {}
+
   let diag = {
     is_discord_activity,
     in_iframe,
+    is_mobile,
     cross_origin_isolated: scope.crossOriginIsolated === true,
     shared_array_buffer: typeof scope.SharedArrayBuffer !== "undefined",
     atomics: typeof scope.Atomics !== "undefined",
@@ -523,4 +535,49 @@ export async function collect_environment_diagnostics({global_scope} = {}) {
   catch {}
 
   return diag;
+}
+
+// Pick a sensible default texture quality ("low" | "mid" | "high") from the
+// environment diagnostics gathered at startup. Never auto-starts the game;
+// simply pre-selects the best matching quality button for the device.
+export function recommend_quality(diag) {
+  if (!diag || typeof diag !== "object") return "low";
+
+  // Mobile devices, missing WebGL2, or software renderers stay on "low".
+  if (diag.is_mobile) return "low";
+  if (!diag.webgl2) return "low";
+
+  let renderer = typeof diag.webgl_renderer === "string" ? diag.webgl_renderer : "";
+  if (/swiftshader|llvmpipe|software|microsoft basic render|lavapipe/i.test(renderer)) {
+    return "low";
+  }
+
+  let cores = typeof diag.hardware_concurrency === "number" ? diag.hardware_concurrency : null;
+  let mem = typeof diag.device_memory_gb === "number" ? diag.device_memory_gb : null;
+  let max_tex = typeof diag.webgl_max_texture_size === "number" ? diag.webgl_max_texture_size : null;
+  let quota = typeof diag.storage_quota_mb === "number" ? diag.storage_quota_mb : null;
+
+  if (mem !== null && mem <= 4) return "low";
+  if (cores !== null && cores <= 2) return "low";
+  if (max_tex !== null && max_tex < 4096) return "low";
+  if (quota !== null && quota < 600) return "low";
+
+  // Good desktop/laptop: >= 8 GB RAM (or >= 8 cores when deviceMemory is hidden)
+  // with hardware WebGL2, >= 8192 max texture size, and >= 1 GB storage quota.
+  let strong_memory_or_cpu =
+    (mem !== null && mem >= 8 && (cores === null || cores >= 4)) ||
+    (mem === null && cores !== null && cores >= 8);
+  let strong_gpu = max_tex === null || max_tex >= 8192;
+  let ample_storage = quota === null || quota >= 1024;
+
+  if (strong_memory_or_cpu && strong_gpu && ample_storage) {
+    return "high";
+  }
+
+  // Mid-range desktop / laptop.
+  if (cores !== null && cores >= 4) {
+    return "mid";
+  }
+
+  return "low";
 }

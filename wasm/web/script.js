@@ -2,7 +2,7 @@ import pako from "/vendor/pako.esm.js";
 import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import { init_discord_activity } from "/discord-activity.js";
-import { init_telemetry, collect_environment_diagnostics } from "/telemetry.js";
+import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
 let db = null;
 let db_name = "stk_db";
@@ -23,6 +23,8 @@ let progress_fill = document.getElementById("progress_fill");
 let progress_percent = document.getElementById("progress_percent");
 let quality_buttons = Array.from(document.querySelectorAll(".quality-btn"));
 let selected_quality = "low";
+let user_selected_quality = false;
+let game_started = false;
 
 let syncing_fs = false;
 let config = {};
@@ -66,6 +68,7 @@ function select_quality(value) {
 for (let btn of quality_buttons) {
   btn.addEventListener("click", () => {
     if (!btn.disabled && btn.dataset.quality) {
+      user_selected_quality = true;
       select_quality(btn.dataset.quality);
     }
   });
@@ -107,6 +110,18 @@ function log_lifecycle(event_name, details = {}) {
 async function emit_environment_diagnostics() {
   try {
     let diag = await collect_environment_diagnostics({global_scope: globalThis});
+    let recommended = recommend_quality(diag);
+    diag.recommended_quality = recommended;
+
+    if (!user_selected_quality && !game_started) {
+      select_quality(recommended);
+      let rec_btn = quality_buttons.find((b) => b.dataset.quality === recommended);
+      let hint = rec_btn && rec_btn.querySelector(".quality-hint");
+      if (hint) {
+        hint.textContent = "Recommended";
+      }
+    }
+
     if (telemetry) {
       telemetry.record({
         level: "info",
@@ -515,6 +530,7 @@ async function main() {
 }
 
 async function start_game() {
+  game_started = true;
   start_button.disabled = true;
   for (let btn of quality_buttons) btn.disabled = true;
   set_loading_state({text: "Loading game files...", indeterminate: true, spinning: true});
