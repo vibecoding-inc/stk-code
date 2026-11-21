@@ -23,7 +23,8 @@ COPY cmake ./cmake
 COPY src ./src
 COPY lib ./lib
 
-RUN cmake -B /build -G Ninja \
+RUN mkdir -p /src/data \
+    && cmake -B /build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DSERVER_ONLY=ON \
         -DCHECK_ASSETS=OFF \
