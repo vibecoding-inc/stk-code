@@ -358,9 +358,36 @@ std::shared_ptr<ServerList> ServersManager::getLANRefreshRequest() const
     // ========================================================================
 
     auto server_list = std::make_shared<ServerList>();
+#ifdef __EMSCRIPTEN__
+    // RequestManager drops queued requests on single-threaded Emscripten, so
+    // populate the virtual Discord Activity LAN room synchronously here.
+    int bridge_ready = EM_ASM_INT({
+        return (globalThis.stkLanBridge &&
+                typeof globalThis.stkLanBridge.isAvailable === "function" &&
+                globalThis.stkLanBridge.isAvailable()) ? 1 : 0;
+    });
+    if (bridge_ready)
+    {
+        auto server = std::make_shared<Server>(
+            /*server_id*/0,
+            irr::core::stringw(L"Discord Activity Room"),
+            /*max_players*/16,
+            /*current_players*/0,
+            /*difficulty*/1,
+            /*server_mode*/3,
+            SocketAddress("10.0.0.1", 2759),
+            /*password_protected*/false,
+            /*game_started*/false,
+            /*current_track*/"");
+        server_list->m_servers.emplace_back(server);
+    }
+    server_list->m_list_updated = true;
+    return server_list;
+#else
     auto request = std::make_shared<LANRefreshRequest>(server_list);
     Online::RequestManager::get()->addRequest(request);
     return server_list;
+#endif
 
 }   // getLANRefreshRequest
 

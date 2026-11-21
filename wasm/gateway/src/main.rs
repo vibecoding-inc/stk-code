@@ -123,6 +123,8 @@ async fn main() {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/lan", get(ws_lan))
+        .route("/api/lan/", get(ws_lan))
+        .route("/", get(ws_lan))
         .with_state(AppState { bridge });
 
     let listener = tokio::net::TcpListener::bind(cfg.listen_addr)
