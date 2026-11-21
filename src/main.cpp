@@ -1481,8 +1481,13 @@ int handleCmdLine(bool has_server_config, bool has_parent_process)
         SocketAddress ipv4_addr = server_addr;
         if (server_addr.isIPv6())
             ipv4_addr.setIP(0);
+#ifdef __EMSCRIPTEN__
+        irr::core::stringw server_display_name(L"Discord Activity Lobby");
+#else
+        irr::core::stringw server_display_name = StringUtils::utf8ToWide(addr);
+#endif
         auto server = std::make_shared<UserDefinedServer>(
-            StringUtils::utf8ToWide(addr), ipv4_addr,
+            server_display_name, ipv4_addr,
             !server_password.empty());
         if (server_addr.isIPv6())
         {

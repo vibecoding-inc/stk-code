@@ -6,9 +6,14 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{info, info_span, warn, Instrument};
+
+pub struct SpawnedRoom {
+    pub process: Box<dyn RoomProcess>,
+    pub ready_rx: watch::Receiver<bool>,
+}
 
 pub trait RoomProcess: Send + Sync {
     fn kill_and_cleanup(&mut self);
@@ -27,7 +32,7 @@ impl RoomProcess for StkChildProcess {
 }
 
 pub trait ServerSpawner: Send + Sync {
-    fn spawn(&self, instance_id: &str, port: u16) -> Result<Box<dyn RoomProcess>, String>;
+    fn spawn(&self, instance_id: &str, port: u16) -> Result<SpawnedRoom, String>;
 }
 
 pub struct StkServerSpawner {
@@ -69,7 +74,7 @@ impl StkServerSpawner {
 }
 
 impl ServerSpawner for StkServerSpawner {
-    fn spawn(&self, instance_id: &str, port: u16) -> Result<Box<dyn RoomProcess>, String> {
+    fn spawn(&self, instance_id: &str, port: u16) -> Result<SpawnedRoom, String> {
         let config_path = std::env::temp_dir().join(format!("stk-room-{port}.xml"));
         let xml = Self::build_server_config_xml(port, self.max_players);
         std::fs::write(&config_path, xml)
@@ -94,15 +99,20 @@ impl ServerSpawner for StkServerSpawner {
             )
         })?;
 
+        let (ready_tx, ready_rx) = watch::channel(false);
         let span = info_span!("stk_room", instance_id = %instance_id, port = port);
 
         if let Some(stdout) = child.stdout.take() {
             let stdout_span = span.clone();
+            let ready_tx_out = ready_tx.clone();
             tokio::spawn(
                 async move {
                     let mut lines = BufReader::new(stdout).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
                         if !line.trim().is_empty() {
+                            if line.contains("Listening has been started") {
+                                let _ = ready_tx_out.send(true);
+                            }
                             info!(stream = "stdout", "{line}");
                         }
                     }
@@ -113,11 +123,15 @@ impl ServerSpawner for StkServerSpawner {
 
         if let Some(stderr) = child.stderr.take() {
             let stderr_span = span.clone();
+            let ready_tx_err = ready_tx;
             tokio::spawn(
                 async move {
                     let mut lines = BufReader::new(stderr).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
                         if !line.trim().is_empty() {
+                            if line.contains("Listening has been started") {
+                                let _ = ready_tx_err.send(true);
+                            }
                             warn!(stream = "stderr", "{line}");
                         }
                     }
@@ -129,13 +143,17 @@ impl ServerSpawner for StkServerSpawner {
         let _enter = span.enter();
         info!(pid = ?child.id(), config = %config_path.display(), "spawned headless STK server");
 
-        Ok(Box::new(StkChildProcess { child, config_path }))
+        Ok(SpawnedRoom {
+            process: Box::new(StkChildProcess { child, config_path }),
+            ready_rx,
+        })
     }
 }
 
 struct RoomEntry {
     port: u16,
     process: Box<dyn RoomProcess>,
+    ready_rx: watch::Receiver<bool>,
     /// Active clients keyed by Discord `user_id` -> (connection_id, kick sender).
     clients: HashMap<String, (u64, oneshot::Sender<()>)>,
     idle_reaper: Option<JoinHandle<()>>,
@@ -170,6 +188,7 @@ pub struct RoomLease {
     pub conn_id: u64,
     pub port: u16,
     pub newly_spawned: bool,
+    pub ready_rx: watch::Receiver<bool>,
     pub kick_rx: oneshot::Receiver<()>,
 }
 
@@ -226,7 +245,7 @@ impl RoomManager {
                 .free_ports
                 .pop_front()
                 .ok_or(RoomError::CapacityReached)?;
-            let process = match self.spawner.spawn(instance_id, port) {
+            let spawned = match self.spawner.spawn(instance_id, port) {
                 Ok(p) => p,
                 Err(err) => {
                     guard.free_ports.push_back(port);
@@ -237,7 +256,8 @@ impl RoomManager {
                 instance_id.to_string(),
                 RoomEntry {
                     port,
-                    process,
+                    process: spawned.process,
+                    ready_rx: spawned.ready_rx,
                     clients: HashMap::new(),
                     idle_reaper: None,
                 },
@@ -269,6 +289,7 @@ impl RoomManager {
             conn_id,
             port: room.port,
             newly_spawned,
+            ready_rx: room.ready_rx.clone(),
             kick_rx,
         })
     }
@@ -360,11 +381,15 @@ mod tests {
     }
 
     impl ServerSpawner for FakeSpawner {
-        fn spawn(&self, _instance_id: &str, _port: u16) -> Result<Box<dyn RoomProcess>, String> {
+        fn spawn(&self, _instance_id: &str, _port: u16) -> Result<SpawnedRoom, String> {
             self.spawned.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(FakeProcess {
-                killed: Arc::clone(&self.killed),
-            }))
+            let (_tx, ready_rx) = watch::channel(true);
+            Ok(SpawnedRoom {
+                process: Box::new(FakeProcess {
+                    killed: Arc::clone(&self.killed),
+                }),
+                ready_rx,
+            })
         }
     }
 

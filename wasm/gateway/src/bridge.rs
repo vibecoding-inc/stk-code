@@ -94,7 +94,7 @@ pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
     };
 
     // Step 3: Join existing room or spawn headless STK server for this instance_id.
-    let lease = match ctx
+    let mut lease = match ctx
         .rooms
         .join_or_spawn(&session.instance_id, &session.user_id)
         .await
@@ -112,9 +112,48 @@ pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
         }
     };
 
-    // Give a freshly spawned STK server a brief window to bind its UDP port.
-    if lease.newly_spawned {
-        tokio::time::sleep(Duration::from_millis(600)).await;
+    // Wait for the headless STK server to finish initializing if it is still starting up.
+    if !*lease.ready_rx.borrow() {
+        let status_payload = if lease.newly_spawned {
+            r#"{"status":"starting_server"}"#
+        } else {
+            r#"{"status":"waiting_for_server"}"#
+        };
+        if ws.send(Message::Text(status_payload.into())).await.is_err() {
+            ctx.rooms
+                .leave(&lease.instance_id, &lease.user_id, lease.conn_id)
+                .await;
+            return;
+        }
+
+        let wait_res = tokio::time::timeout(
+            Duration::from_secs(10),
+            lease.ready_rx.wait_for(|ready| *ready),
+        )
+        .await;
+        match wait_res {
+            Ok(Ok(_)) => {
+                info!(
+                    instance_id = %session.instance_id,
+                    room_port = lease.port,
+                    "STK server reported ready"
+                );
+            }
+            Ok(Err(_)) => {
+                warn!(
+                    instance_id = %session.instance_id,
+                    room_port = lease.port,
+                    "STK server exited before becoming ready"
+                );
+            }
+            Err(_) => {
+                warn!(
+                    instance_id = %session.instance_id,
+                    room_port = lease.port,
+                    "timed out waiting for STK readiness log line; proceeding to bridge"
+                );
+            }
+        }
     }
 
     // Step 4: Bind a dedicated ephemeral local UDP socket for this client.

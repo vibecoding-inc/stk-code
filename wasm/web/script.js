@@ -22,6 +22,14 @@ let secondary_start_button = document.getElementById("secondary_start_button");
 let player_badge = document.getElementById("player_badge");
 let player_badge_text = document.getElementById("player_badge_text");
 let status_text = document.getElementById("status_text");
+
+// Avoid layout jump on load: when inside a Discord Activity iframe, show both
+// action buttons in their disabled state right away instead of shifting from
+// one button to two after initialization finishes.
+if (new URLSearchParams(window.location.search).has("frame_id")) {
+  if (start_button) start_button.textContent = "Join Activity Lobby";
+  if (secondary_start_button) secondary_start_button.classList.add("is-visible");
+}
 let info_container = document.getElementById("info_container");
 let loading_spinner = document.getElementById("loading_spinner");
 let progress_fill = document.getElementById("progress_fill");
@@ -583,6 +591,9 @@ async function main() {
   else {
     start_button.textContent = "Start Game";
     start_button.onclick = () => start_game({connect_to_lobby: false});
+    if (secondary_start_button) {
+      secondary_start_button.classList.remove("is-visible");
+    }
   }
   start_button.disabled = false;
   set_loading_state({
@@ -613,11 +624,38 @@ async function start_game({connect_to_lobby = false} = {}) {
   try {
     await load_data();
     await wait_for_frame();
-    set_loading_state({
-      text: connect_to_lobby ? "Joining Activity Lobby..." : "Launching SuperTuxKart...",
-      indeterminate: true,
-      spinning: true,
-    });
+
+    if (connect_to_lobby && globalThis.stkLanBridge && typeof globalThis.stkLanBridge.preconnect === "function") {
+      let status_labels = {
+        connecting: "Connecting to multiplayer gateway...",
+        authenticating: "Authenticating with Discord...",
+        starting_server: "Starting game server for this Activity (first launch takes a few seconds)...",
+        waiting_for_server: "Waiting for Activity game server to finish starting...",
+        ready: "Game server ready! Launching SuperTuxKart...",
+      };
+      set_loading_state({
+        text: status_labels.connecting,
+        indeterminate: true,
+        spinning: true,
+      });
+      await globalThis.stkLanBridge.preconnect({
+        on_status: (st) => {
+          set_loading_state({
+            text: status_labels[st] || `Preparing lobby (${st})...`,
+            indeterminate: st !== "ready",
+            percent: st === "ready" ? 100 : null,
+            spinning: true,
+          });
+        },
+      });
+    }
+    else {
+      set_loading_state({
+        text: "Launching SuperTuxKart...",
+        indeterminate: true,
+        spinning: true,
+      });
+    }
 
     await wait_for_frame();
     let launch_args = connect_to_lobby ? ["--connect-now=10.0.0.1:2759"] : [];

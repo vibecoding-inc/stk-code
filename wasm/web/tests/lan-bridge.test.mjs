@@ -114,3 +114,27 @@ test("create_lan_bridge closes socket on auth rejection", () => {
   sock.emit("message", {data: JSON.stringify({ok: false, error: "user_not_in_instance"})});
   assert.equal(sock.closed, true);
 });
+
+test("preconnect emits starting_server status and resolves on ok:true", async () => {
+  MockWebSocket.instances = [];
+  let heap = new Uint8Array(16);
+  let statuses = [];
+  let bridge = create_lan_bridge({
+    get_url: () => "wss://123.discordsays.com/api/lan",
+    get_credentials: () => ({access_token: "tok", instance_id: "i-1-gc-2-3"}),
+    get_heap_u8: () => heap,
+    WebSocketImpl: MockWebSocket,
+    logger: {log() {}, warn() {}},
+  });
+
+  let promise = bridge.preconnect({on_status: (s) => statuses.push(s)});
+  let sock = MockWebSocket.instances[0];
+  sock.readyState = 1;
+  sock.emit("open");
+  sock.emit("message", {data: JSON.stringify({status: "starting_server"})});
+  assert.equal(sock.closed, false);
+  sock.emit("message", {data: JSON.stringify({ok: true, instance_id: "i-1-gc-2-3"})});
+  await promise;
+
+  assert.deepEqual(statuses, ["connecting", "authenticating", "starting_server", "ready"]);
+});
