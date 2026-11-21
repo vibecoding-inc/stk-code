@@ -4,10 +4,11 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{info, info_span, warn, Instrument};
 
 pub trait RoomProcess: Send + Sync {
     fn kill_and_cleanup(&mut self);
@@ -76,17 +77,16 @@ impl ServerSpawner for StkServerSpawner {
 
         let mut cmd = Command::new(&self.stk_binary);
         cmd.arg(format!("--server-config={}", config_path.display()))
-            .arg("--no-console-log")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
 
         if let Some(data_dir) = &self.stk_data_dir {
             cmd.env("SUPERTUXKART_DATADIR", data_dir);
         }
 
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             let _ = std::fs::remove_file(&config_path);
             format!(
                 "failed to spawn STK server '{}' for instance '{}': {e}",
@@ -94,12 +94,40 @@ impl ServerSpawner for StkServerSpawner {
             )
         })?;
 
-        info!(
-            instance_id = %instance_id,
-            port = port,
-            pid = ?child.id(),
-            "spawned headless STK server"
-        );
+        let span = info_span!("stk_room", instance_id = %instance_id, port = port);
+
+        if let Some(stdout) = child.stdout.take() {
+            let stdout_span = span.clone();
+            tokio::spawn(
+                async move {
+                    let mut lines = BufReader::new(stdout).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        if !line.trim().is_empty() {
+                            info!(stream = "stdout", "{line}");
+                        }
+                    }
+                }
+                .instrument(stdout_span),
+            );
+        }
+
+        if let Some(stderr) = child.stderr.take() {
+            let stderr_span = span.clone();
+            tokio::spawn(
+                async move {
+                    let mut lines = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        if !line.trim().is_empty() {
+                            warn!(stream = "stderr", "{line}");
+                        }
+                    }
+                }
+                .instrument(stderr_span),
+            );
+        }
+
+        let _enter = span.enter();
+        info!(pid = ?child.id(), config = %config_path.display(), "spawned headless STK server");
 
         Ok(Box::new(StkChildProcess { child, config_path }))
     }

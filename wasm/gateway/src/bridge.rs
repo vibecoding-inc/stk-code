@@ -5,7 +5,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn, Instrument};
 
 use crate::auth::AuthVerifier;
 use crate::rooms::RoomManager;
@@ -51,15 +51,21 @@ async fn send_handshake_error(ws: &mut WebSocket, code: &str) {
 }
 
 pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
+    info!("accepted WebSocket connection, awaiting auth handshake");
     // Step 1: Expect a JSON text auth frame within `auth_timeout`.
     let auth_msg = match tokio::time::timeout(ctx.auth_timeout, ws.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => text,
         Ok(Some(Ok(_))) => {
+            warn!("rejected WebSocket: expected text handshake frame");
             send_handshake_error(&mut ws, "expected_text_handshake").await;
             return;
         }
-        Ok(_) => return,
+        Ok(_) => {
+            info!("WebSocket closed before auth handshake");
+            return;
+        }
         Err(_) => {
+            warn!("rejected WebSocket: auth handshake timed out");
             send_handshake_error(&mut ws, "auth_timeout").await;
             return;
         }
@@ -150,72 +156,93 @@ pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
         return;
     }
 
-    info!(
+    let room_span = info_span!(
+        "ws_bridge",
         instance_id = %session.instance_id,
         user_id = %session.user_id,
-        room_port = lease.port,
-        "client bridged to STK room"
+        username = %session.username,
+        room_port = lease.port
     );
 
-    let (mut ws_tx, mut ws_rx) = ws.split();
-    let mut kick_rx = lease.kick_rx;
-    let mut udp_buf = vec![0u8; 2048];
-    let max_bytes = ctx.max_datagram_bytes;
+    async move {
+        info!(
+            local_udp = ?udp.local_addr().ok(),
+            target_udp = %target_addr,
+            "client bridged to STK room"
+        );
 
-    loop {
-        tokio::select! {
-            _ = &mut kick_rx => {
-                debug!(user_id = %session.user_id, "connection superseded by reconnect");
-                let _ = ws_tx.send(Message::Close(None)).await;
-                break;
-            }
-            ws_item = ws_rx.next() => {
-                match ws_item {
-                    Some(Ok(Message::Binary(data))) => {
-                        if data.is_empty() || data.len() > max_bytes {
-                            debug!(len = data.len(), "dropped out-of-bounds datagram");
-                            continue;
+        let (mut ws_tx, mut ws_rx) = ws.split();
+        let mut kick_rx = lease.kick_rx;
+        let mut udp_buf = vec![0u8; 2048];
+        let max_bytes = ctx.max_datagram_bytes;
+        let mut tx_packets: u64 = 0;
+        let mut rx_packets: u64 = 0;
+
+        loop {
+            tokio::select! {
+                _ = &mut kick_rx => {
+                    info!("connection superseded by reconnect");
+                    let _ = ws_tx.send(Message::Close(None)).await;
+                    break;
+                }
+                ws_item = ws_rx.next() => {
+                    match ws_item {
+                        Some(Ok(Message::Binary(data))) => {
+                            if data.is_empty() || data.len() > max_bytes {
+                                debug!(len = data.len(), "dropped out-of-bounds datagram");
+                                continue;
+                            }
+                            if tx_packets == 0 {
+                                info!(bytes = data.len(), "forwarding first client -> STK datagram");
+                            }
+                            tx_packets += 1;
+                            if let Err(err) = udp.send(&data).await {
+                                warn!(error = %err, "udp send error");
+                            }
                         }
-                        if let Err(err) = udp.send(&data).await {
-                            debug!(error = %err, "udp send error");
+                        Some(Ok(Message::Ping(payload))) => {
+                            if ws_tx.send(Message::Pong(payload)).await.is_err() {
+                                break;
+                            }
                         }
-                    }
-                    Some(Ok(Message::Ping(payload))) => {
-                        if ws_tx.send(Message::Pong(payload)).await.is_err() {
+                        Some(Ok(Message::Close(frame))) => {
+                            info!(?frame, "client sent WebSocket close");
                             break;
                         }
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(_)) => {}
-                    Some(Err(err)) => {
-                        debug!(error = %err, "ws recv error");
-                        break;
+                        None => break,
+                        Some(Ok(_)) => {}
+                        Some(Err(err)) => {
+                            warn!(error = %err, "ws recv error");
+                            break;
+                        }
                     }
                 }
-            }
-            udp_res = udp.recv(&mut udp_buf) => {
-                match udp_res {
-                    Ok(n) if n > 0 => {
-                        if ws_tx.send(Message::Binary(udp_buf[..n].to_vec().into())).await.is_err() {
-                            break;
+                udp_res = udp.recv(&mut udp_buf) => {
+                    match udp_res {
+                        Ok(n) if n > 0 => {
+                            if rx_packets == 0 {
+                                info!(bytes = n, "forwarding first STK -> client datagram");
+                            }
+                            rx_packets += 1;
+                            if ws_tx.send(Message::Binary(udp_buf[..n].to_vec().into())).await.is_err() {
+                                break;
+                            }
                         }
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        // ICMP port-unreachable can happen briefly while STK finishes binding.
-                        debug!(error = %err, "udp recv error");
+                        Ok(_) => {}
+                        Err(err) => {
+                            // ICMP port-unreachable can happen briefly while STK finishes binding.
+                            debug!(error = %err, "udp recv error");
+                        }
                     }
                 }
             }
         }
-    }
 
-    ctx.rooms
-        .leave(&lease.instance_id, &lease.user_id, lease.conn_id)
-        .await;
-    info!(
-        instance_id = %session.instance_id,
-        user_id = %session.user_id,
-        "client disconnected from STK room"
-    );
+        ctx.rooms
+            .leave(&lease.instance_id, &lease.user_id, lease.conn_id)
+            .await;
+        info!(tx_packets, rx_packets, "client disconnected from STK room");
+    }
+    .instrument(room_span)
+    .await;
 }
