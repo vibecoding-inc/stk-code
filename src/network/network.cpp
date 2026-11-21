@@ -80,6 +80,10 @@ Network::Network(int peer_count, int channel_limit,
     }
     if (m_host)
     {
+#ifdef __EMSCRIPTEN__
+        m_ipv6_socket = false;
+        m_port = address ? address->port : 0;
+#else
         struct sockaddr_storage ss;
         memset(&ss, 0, sizeof (struct sockaddr_storage));
         socklen_t len = sizeof(ss);
@@ -102,6 +106,7 @@ Network::Network(int peer_count, int channel_limit,
                 m_port = ntohs(sin->sin_port);
             }
         }
+#endif
     }
 }   // Network
 
@@ -163,6 +168,13 @@ void Network::sendRawPacket(const BareNetworkString &buffer,
 int Network::receiveRawPacket(char *buffer, int buf_len,
                               SocketAddress *sender, int max_tries)
 {
+#ifdef __EMSCRIPTEN__
+    (void)buffer;
+    (void)buf_len;
+    (void)sender;
+    (void)max_tries;
+    return -1;
+#else
     memset(buffer, 0, buf_len);
 
     struct sockaddr_storage addr = {};
@@ -205,6 +217,7 @@ int Network::receiveRawPacket(char *buffer, int buf_len,
             sender->toString().c_str());
     }
     return len;
+#endif
 }   // receiveRawPacket
 
 // ----------------------------------------------------------------------------

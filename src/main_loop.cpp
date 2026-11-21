@@ -711,6 +711,16 @@ void MainLoop::run()
             {
                 gp->sendActions();
             }
+#ifdef __EMSCRIPTEN__
+            if (STKHost::existHost())
+            {
+                STKHost::get()->pollOnce();
+            }
+            if (auto pm = ProtocolManager::lock())
+            {
+                pm->pollAsynchronousUpdate();
+            }
+#endif
         }
 
 #ifndef __EMSCRIPTEN__

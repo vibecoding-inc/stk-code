@@ -402,6 +402,16 @@ std::vector<std::shared_ptr<NetworkPlayerProfile> >
 //-----------------------------------------------------------------------------
 void ClientLobby::update(int ticks)
 {
+#ifdef __EMSCRIPTEN__
+    if (m_em_pending_start_time > 0 && STKHost::existHost())
+    {
+        if (STKHost::get()->getNetworkTimer() >= m_em_pending_start_time)
+        {
+            m_em_pending_start_time = 0;
+            m_state.store(RACING);
+        }
+    }
+#endif
     switch (m_state.load())
     {
     case LINKED:
@@ -1027,6 +1037,18 @@ void ClientLobby::startGame(Event* event)
     core::stringw err_msg = _("Failed to start the network game.");
     // Different stk process thread may have different stk host
     STKHost* stk_host = STKHost::get();
+#ifdef __EMSCRIPTEN__
+    const uint64_t cur_time = stk_host->getNetworkTimer();
+    if (!(start_time > cur_time))
+    {
+        Log::error("ClientLobby", "Network timer is too slow to catch "
+            "up, you must have a poor network.");
+        stk_host->setErrorMessage(err_msg);
+        stk_host->requestShutdown();
+        return;
+    }
+    m_em_pending_start_time = start_time;
+#else
     joinStartGameThread();
     m_start_game_thread = std::thread([start_time, stk_host, this, err_msg]()
         {
@@ -1045,6 +1067,7 @@ void ClientLobby::startGame(Event* event)
             //Log::info("ClientLobby", "Started at %lf", StkTime::getRealTime());
             m_state.store(RACING);
         });
+#endif
 }   // startGame
 
 //-----------------------------------------------------------------------------
@@ -1923,7 +1946,11 @@ void ClientLobby::downloadAddonsPack(std::shared_ptr<Online::HTTPRequest> r)
     if (startedDownloadAddonsPack())
         return;
     m_download_request = r;
+#ifdef __EMSCRIPTEN__
+    r->executeNow();
+#else
     m_background_download = std::thread([r](){ r->executeNow(); });
+#endif
 }   // downloadAddonsPack
 
 // ----------------------------------------------------------------------------

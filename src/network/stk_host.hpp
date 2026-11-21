@@ -157,6 +157,12 @@ private:
 
     std::unique_ptr<NetworkTimerSynchronizer> m_nts;
 
+#ifdef __EMSCRIPTEN__
+    bool m_em_listening = false;
+    uint64_t m_em_last_update_speed_time = 0;
+    uint64_t m_em_last_ping_update_time = 0;
+#endif
+
     // ------------------------------------------------------------------------
     STKHost(bool server);
     // ------------------------------------------------------------------------
@@ -279,6 +285,10 @@ public:
     void startListening();
     // ------------------------------------------------------------------------
     void stopListening();
+#ifdef __EMSCRIPTEN__
+    // ------------------------------------------------------------------------
+    void pollOnce();
+#endif
     // ------------------------------------------------------------------------
     bool peerExists(const SocketAddress& peer_address);
     // ------------------------------------------------------------------------

@@ -61,6 +61,10 @@ private:
     static int m_retry_count;
     static bool m_done_intecept;
     bool detectPort();
+#ifdef __EMSCRIPTEN__
+    ENetPeer* m_em_connect_peer = NULL;
+    uint64_t m_em_connect_deadline = 0;
+#endif
 public:
              ConnectToServer(std::shared_ptr<Server> server);
     virtual ~ConnectToServer();

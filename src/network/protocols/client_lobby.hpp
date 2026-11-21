@@ -119,6 +119,10 @@ private:
 
     uint64_t m_start_live_game_time;
 
+#ifdef __EMSCRIPTEN__
+    uint64_t m_em_pending_start_time = 0;
+#endif
+
     /** The state of the finite state machine. */
     std::atomic<ClientState> m_state;
 

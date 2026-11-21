@@ -33,6 +33,10 @@
 #include "utils/translation.hpp"
 #include "utils/time.hpp"
 
+#ifdef __EMSCRIPTEN__
+#  include <emscripten.h>
+#endif
+
 #include <assert.h>
 #include <functional>
 #include <set>
@@ -223,6 +227,35 @@ std::shared_ptr<ServerList> ServersManager::getLANRefreshRequest() const
             auto server_list = m_server_list.lock();
             if (!server_list)
                 return;
+
+#ifdef __EMSCRIPTEN__
+            // In single-threaded WASM (Discord Activity), avoid blocking 1s
+            // UDP broadcast loops and expose the virtual Discord Activity LAN
+            // room directly when the WebSocket LAN bridge is configured.
+            int bridge_ready = EM_ASM_INT({
+                return (globalThis.stkLanBridge &&
+                        typeof globalThis.stkLanBridge.isAvailable === "function" &&
+                        globalThis.stkLanBridge.isAvailable()) ? 1 : 0;
+            });
+            if (bridge_ready)
+            {
+                auto server = std::make_shared<Server>(
+                    /*server_id*/0,
+                    irr::core::stringw(L"Discord Activity Room"),
+                    /*max_players*/16,
+                    /*current_players*/0,
+                    /*difficulty*/1,
+                    /*server_mode*/3,
+                    SocketAddress("10.0.0.1", 2759),
+                    /*password_protected*/false,
+                    /*game_started*/false,
+                    /*current_track*/"");
+                server_list->m_servers.emplace_back(server);
+            }
+            m_success = true;
+            server_list->m_list_updated = true;
+            return;
+#endif
 
             ENetAddress addr = {};
             setIPv6Socket(UserConfigParams::m_ipv6_lan ? 1 : 0);

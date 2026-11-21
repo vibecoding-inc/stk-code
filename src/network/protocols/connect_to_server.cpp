@@ -334,11 +334,55 @@ void ConnectToServer::asynchronousUpdate()
             // that has stun mapped, the first 8 seconds allow the server to
             // start the connect to peer protocol first before the port is
             // remapped.
+#ifdef __EMSCRIPTEN__
+            // Non-blocking frame-stepped ENet connect for single-threaded WASM.
+            Network* nw = STKHost::get()->getNetwork();
+            if (!nw || !nw->getENetHost())
+            {
+                m_state = DONE;
+                break;
+            }
+            if (!m_em_connect_peer)
+            {
+                m_server_address = m_server->getAddress().toENetAddress();
+                m_em_connect_peer = nw->connectTo(m_server_address);
+                if (!m_em_connect_peer)
+                {
+                    m_state = DONE;
+                    break;
+                }
+                m_em_connect_deadline = StkTime::getMonoTimeMs() + 15000;
+                Log::info("ConnectToServer", "Initiated non-blocking WASM connect to %s",
+                    SocketAddress(m_server_address).toString().c_str());
+            }
+            ENetEvent event;
+            while (enet_host_service(nw->getENetHost(), &event, 0) > 0)
+            {
+                if (event.type == ENET_EVENT_TYPE_CONNECT)
+                {
+                    Log::info("ConnectToServer", "Connected (WASM) to %s",
+                        SocketAddress(m_server_address).toString().c_str());
+                    m_em_connect_peer = NULL;
+                    STKHost::get()->initClientNetwork(event, nw);
+                    m_state = DONE;
+                    return;
+                }
+            }
+            if (StkTime::getMonoTimeMs() > m_em_connect_deadline)
+            {
+                Log::error("ConnectToServer", "WASM connection timed out.");
+                enet_peer_reset(m_em_connect_peer);
+                m_em_connect_peer = NULL;
+                m_state = DONE;
+            }
+            break;
+#else
             if (tryConnect(2000, 4, true/*another_port*/, isIPv6Socket()))
                 break;
             if (!tryConnect(2000, 11, false/*another_port*/, isIPv6Socket()))
                 m_state = DONE;
             break;
+#endif
         }
         case DONE:
         case EXITING:

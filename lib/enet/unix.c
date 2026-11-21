@@ -18,6 +18,14 @@
 #define ENET_BUILDING_LIB 1
 #include "enet/enet.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <arpa/inet.h>
+#define STK_WASM_VIRTUAL_SOCK_BASE 10000
+static int g_stk_wasm_next_sock = STK_WASM_VIRTUAL_SOCK_BASE;
+static enet_uint16 g_stk_wasm_bound_port = 0;
+#endif
+
 #ifdef __APPLE__
 #ifdef HAS_POLL
 #undef HAS_POLL
@@ -250,6 +258,11 @@ enet_address_get_host (const ENetAddress * address, char * name, size_t nameLeng
 int
 enet_socket_bind (ENetSocket socket, const ENetAddress * address)
 {
+#ifdef __EMSCRIPTEN__
+    (void)socket;
+    g_stk_wasm_bound_port = address ? address->port : 0;
+    return 0;
+#else
     if (isIPv6Socket() == 1)
     {
         struct sockaddr_in6 sin;
@@ -294,11 +307,22 @@ enet_socket_bind (ENetSocket socket, const ENetAddress * address)
                     (struct sockaddr *) & sin,
                     sizeof (struct sockaddr_in));
     }
+#endif
 }
 
 int
 enet_socket_get_address (ENetSocket socket, ENetAddress * address)
 {
+#ifdef __EMSCRIPTEN__
+    (void)socket;
+    if (address != NULL)
+    {
+        memset (address, 0, sizeof (*address));
+        address->host.p0 = htonl (0x0A000002); /* 10.0.0.2 */
+        address->port = g_stk_wasm_bound_port;
+    }
+    return 0;
+#else
     if (isIPv6Socket() == 1)
     {
         struct sockaddr_in6 sin;
@@ -327,6 +351,7 @@ enet_socket_get_address (ENetSocket socket, ENetAddress * address)
 
         return 0;
     }
+#endif
 }
 
 int 
@@ -338,6 +363,19 @@ enet_socket_listen (ENetSocket socket, int backlog)
 ENetSocket
 enet_socket_create (ENetSocketType type)
 {
+#ifdef __EMSCRIPTEN__
+    if (type == ENET_SOCKET_TYPE_DATAGRAM)
+    {
+        int sock = g_stk_wasm_next_sock++;
+        EM_ASM({
+            if (globalThis.stkLanBridge && typeof globalThis.stkLanBridge.open === "function") {
+                globalThis.stkLanBridge.open($0);
+            }
+        }, sock);
+        return sock;
+    }
+    return ENET_SOCKET_NULL;
+#else
     int pf_family = isIPv6Socket() == 1 ? PF_INET6 : PF_INET;
     int socket_fd = socket (pf_family, type == ENET_SOCKET_TYPE_DATAGRAM ? SOCK_DGRAM : SOCK_STREAM, 0);
     if (isIPv6Socket() == 1 && socket_fd != -1)
@@ -348,11 +386,18 @@ enet_socket_create (ENetSocketType type)
         setsockopt (socket_fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) & no, sizeof (no));
     }
     return socket_fd;
+#endif
 }
 
 int
 enet_socket_set_option (ENetSocket socket, ENetSocketOption option, int value)
 {
+#ifdef __EMSCRIPTEN__
+    (void)socket;
+    (void)option;
+    (void)value;
+    return 0;
+#else
     int result = -1;
     switch (option)
     {
@@ -406,11 +451,18 @@ enet_socket_set_option (ENetSocket socket, ENetSocketOption option, int value)
             break;
     }
     return result == -1 ? -1 : 0;
+#endif
 }
 
 int
 enet_socket_get_option (ENetSocket socket, ENetSocketOption option, int * value)
 {
+#ifdef __EMSCRIPTEN__
+    (void)socket;
+    (void)option;
+    if (value) *value = 0;
+    return 0;
+#else
     int result = -1;
     socklen_t len;
     switch (option)
@@ -424,6 +476,7 @@ enet_socket_get_option (ENetSocket socket, ENetSocketOption option, int * value)
             break;
     }
     return result == -1 ? -1 : 0;
+#endif
 }
 
 int
@@ -471,14 +524,31 @@ enet_socket_accept (ENetSocket socket, ENetAddress * address)
 int
 enet_socket_shutdown (ENetSocket socket, ENetSocketShutdown how)
 {
+#ifdef __EMSCRIPTEN__
+    (void)socket;
+    (void)how;
+    return 0;
+#else
     return shutdown (socket, (int) how);
+#endif
 }
 
 void
 enet_socket_destroy (ENetSocket socket)
 {
+#ifdef __EMSCRIPTEN__
+    if (socket != -1)
+    {
+        EM_ASM({
+            if (globalThis.stkLanBridge && typeof globalThis.stkLanBridge.close === "function") {
+                globalThis.stkLanBridge.close($0);
+            }
+        }, socket);
+    }
+#else
     if (socket != -1)
       close (socket);
+#endif
 }
 
 int
@@ -487,6 +557,27 @@ enet_socket_send (ENetSocket socket,
                   const ENetBuffer * buffers,
                   size_t bufferCount)
 {
+#ifdef __EMSCRIPTEN__
+    unsigned char flat[2048];
+    size_t total = 0;
+    size_t i;
+    (void)address;
+    for (i = 0; i < bufferCount; i++)
+    {
+        if (total + buffers[i].dataLength > sizeof(flat))
+            return -1;
+        memcpy(flat + total, buffers[i].data, buffers[i].dataLength);
+        total += buffers[i].dataLength;
+    }
+    if (total == 0)
+        return 0;
+    return EM_ASM_INT({
+        if (globalThis.stkLanBridge && typeof globalThis.stkLanBridge.send === "function") {
+            return globalThis.stkLanBridge.send($0, $1, $2);
+        }
+        return -1;
+    }, socket, flat, (int)total);
+#else
     struct msghdr msgHdr;
     struct sockaddr_storage sin;
     memset (& sin, 0, sizeof (sin));
@@ -533,6 +624,7 @@ enet_socket_send (ENetSocket socket,
     }
 
     return sentLength;
+#endif
 }
 
 int
@@ -541,6 +633,34 @@ enet_socket_receive (ENetSocket socket,
                      ENetBuffer * buffers,
                      size_t bufferCount)
 {
+#ifdef __EMSCRIPTEN__
+    unsigned char flat[2048];
+    int recvLength = EM_ASM_INT({
+        if (globalThis.stkLanBridge && typeof globalThis.stkLanBridge.recv === "function") {
+            return globalThis.stkLanBridge.recv($0, $1, $2);
+        }
+        return 0;
+    }, socket, flat, (int)sizeof(flat));
+    if (recvLength <= 0)
+        return recvLength;
+    size_t offset = 0;
+    size_t i;
+    for (i = 0; i < bufferCount && offset < (size_t)recvLength; i++)
+    {
+        size_t remaining = (size_t)recvLength - offset;
+        size_t chunk = buffers[i].dataLength < remaining ? buffers[i].dataLength : remaining;
+        memcpy(buffers[i].data, flat + offset, chunk);
+        offset += chunk;
+    }
+    if (address != NULL)
+    {
+        memset(address, 0, sizeof(*address));
+        /* Match the virtual Discord Activity LAN server address (10.0.0.1:2759) */
+        address->host.p0 = htonl(0x0A000001);
+        address->port = 2759;
+    }
+    return recvLength;
+#else
     struct msghdr msgHdr;
     struct sockaddr_storage sin;
     memset (& sin, 0, sizeof (sin));
@@ -598,6 +718,7 @@ enet_socket_receive (ENetSocket socket,
     }
 
     return recvLength;
+#endif
 }
 
 int
@@ -614,6 +735,25 @@ enet_socketset_select (ENetSocket maxSocket, ENetSocketSet * readSet, ENetSocket
 int
 enet_socket_wait (ENetSocket socket, enet_uint32 * condition, enet_uint32 timeout)
 {
+#ifdef __EMSCRIPTEN__
+    (void)timeout;
+    enet_uint32 out = ENET_SOCKET_WAIT_NONE;
+    if (*condition & ENET_SOCKET_WAIT_SEND)
+        out |= ENET_SOCKET_WAIT_SEND;
+    if (*condition & ENET_SOCKET_WAIT_RECEIVE)
+    {
+        int has_pending = EM_ASM_INT({
+            if (globalThis.stkLanBridge && typeof globalThis.stkLanBridge.hasPending === "function") {
+                return globalThis.stkLanBridge.hasPending($0) ? 1 : 0;
+            }
+            return 0;
+        }, socket);
+        if (has_pending)
+            out |= ENET_SOCKET_WAIT_RECEIVE;
+    }
+    *condition = out;
+    return 0;
+#else
 #ifdef HAS_POLL
     struct pollfd pollSocket;
     int pollCount;
@@ -697,6 +837,7 @@ enet_socket_wait (ENetSocket socket, enet_uint32 * condition, enet_uint32 timeou
 
     return 0;
 #endif
+#endif /* __EMSCRIPTEN__ */
 }
 
 #endif

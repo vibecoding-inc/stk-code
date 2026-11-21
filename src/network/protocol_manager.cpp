@@ -51,6 +51,7 @@ std::shared_ptr<ProtocolManager> ProtocolManager::createInstance()
     // here
     ProcessType pt = STKProcess::getType();
     auto pm = std::make_shared<ProtocolManager>();
+#ifndef __EMSCRIPTEN__
     pm->m_asynchronous_update_thread = std::thread([pm, pt]()
         {
             std::string thread_name = "PtlMgr";
@@ -102,6 +103,7 @@ std::shared_ptr<ProtocolManager> ProtocolManager::createInstance()
                 }
             });
     }
+#endif
     m_protocol_manager[pt] = pm;
     return pm;
 }   // createInstance
@@ -160,6 +162,7 @@ void ProtocolManager::OneProtocolType::abort()
 void ProtocolManager::abort()
 {
     m_exit.store(true);
+#ifndef __EMSCRIPTEN__
     if (NetworkConfig::get()->isServer())
     {
         std::unique_lock<std::mutex> ul(m_game_protocol_mutex);
@@ -170,6 +173,7 @@ void ProtocolManager::abort()
     }
     // wait the thread to finish
     m_asynchronous_update_thread.join();
+#endif
 }   // abort
 
 // ----------------------------------------------------------------------------

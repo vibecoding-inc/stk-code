@@ -767,8 +767,15 @@ void STKHost::setErrorMessage(const irr::core::stringw &message)
 void STKHost::startListening()
 {
     m_exit_timeout.store(std::numeric_limits<uint64_t>::max());
+#ifdef __EMSCRIPTEN__
+    m_em_listening = true;
+    m_em_last_update_speed_time = StkTime::getMonoTimeMs();
+    m_em_last_ping_update_time = StkTime::getMonoTimeMs();
+    Log::info("STKHost", "Listening started (cooperative single-threaded WASM mode).");
+#else
     m_listening_thread = std::thread(std::bind(&STKHost::mainLoop, this,
         STKProcess::getType()));
+#endif
 }   // startListening
 
 // ----------------------------------------------------------------------------
@@ -779,9 +786,215 @@ void STKHost::stopListening()
 {
     if (m_exit_timeout.load() == std::numeric_limits<uint64_t>::max())
         m_exit_timeout.store(0);
+#ifdef __EMSCRIPTEN__
+    m_em_listening = false;
+#else
     if (m_listening_thread.joinable())
         m_listening_thread.join();
+#endif
 }   // stopListening
+
+#ifdef __EMSCRIPTEN__
+// ----------------------------------------------------------------------------
+/** \brief Non-blocking single-frame ENet pump for single-threaded WASM clients.
+ */
+void STKHost::pollOnce()
+{
+    if (!m_em_listening || !m_network)
+        return;
+    if (m_exit_timeout.load() <= StkTime::getMonoTimeMs())
+    {
+        m_em_listening = false;
+        return;
+    }
+
+    ENetHost* host = m_network->getENetHost();
+    if (!host)
+        return;
+
+    uint64_t now = StkTime::getMonoTimeMs();
+    if (m_em_last_update_speed_time < now)
+    {
+        m_em_last_update_speed_time = now + 1000;
+        m_upload_speed.store(host->totalSentData);
+        m_download_speed.store(host->totalReceivedData);
+        host->totalSentData = 0;
+        host->totalReceivedData = 0;
+    }
+
+    std::vector<std::tuple<ENetPeer*, ENetPacket*, uint32_t,
+        ENetCommandType, ENetAddress> > copied_list;
+    {
+        std::lock_guard<std::mutex> lock(m_enet_cmd_mutex);
+        std::swap(copied_list, m_enet_cmd);
+    }
+    for (auto& p : copied_list)
+    {
+        ENetPeer* peer = std::get<0>(p);
+        ENetAddress& ea = std::get<4>(p);
+        ENetAddress& ea_peer_now = peer->address;
+        ENetPacket* packet = std::get<1>(p);
+        if (peer->state != ENET_PEER_STATE_CONNECTED ||
+#if defined(ENABLE_IPV6) || defined(__SWITCH__)
+            (enet_ip_not_equal(ea_peer_now.host, ea.host) &&
+            ea_peer_now.port != ea.port))
+#else
+            (ea_peer_now.host != ea.host && ea_peer_now.port != ea.port))
+#endif
+        {
+            if (packet != NULL)
+                enet_packet_destroy(packet);
+            continue;
+        }
+        switch (std::get<3>(p))
+        {
+        case ECT_SEND_PACKET:
+            if (enet_peer_send(peer, (uint8_t)std::get<2>(p), packet) < 0)
+                enet_packet_destroy(packet);
+            break;
+        case ECT_DISCONNECT:
+            enet_peer_disconnect(peer, std::get<2>(p));
+            break;
+        case ECT_RESET:
+            enet_host_flush(host);
+            enet_peer_reset(peer);
+            {
+                std::lock_guard<std::mutex> lock(m_peers_mutex);
+                m_peers.erase(peer);
+            }
+            break;
+        }
+    }
+
+    ENetEvent event;
+    bool need_ping_update = false;
+    while (enet_host_service(host, &event, 0) > 0)
+    {
+        auto lp = LobbyProtocol::get<LobbyProtocol>();
+        if (m_em_last_ping_update_time < StkTime::getMonoTimeMs())
+        {
+            m_em_last_ping_update_time = StkTime::getMonoTimeMs() + 2000;
+            if (lp && lp->isRacing())
+            {
+                auto p = getServerPeerForClient();
+                if (p)
+                    m_client_ping.store(p->getPing(), std::memory_order_relaxed);
+                need_ping_update = false;
+            }
+            else
+            {
+                need_ping_update = true;
+            }
+        }
+        if (event.type == ENET_EVENT_TYPE_NONE)
+            continue;
+
+        Event* stk_event = NULL;
+        if (event.type == ENET_EVENT_TYPE_CONNECT)
+        {
+            auto stk_peer = std::make_shared<STKPeer>(
+                event.peer, this, ++m_next_unique_host_id);
+            {
+                std::lock_guard<std::mutex> lock(m_peers_mutex);
+                m_peers[event.peer] = stk_peer;
+            }
+            stk_peer->setValidated(true);
+            stk_event = new Event(&event, stk_peer);
+        }
+        else if (event.type == ENET_EVENT_TYPE_DISCONNECT)
+        {
+            if (m_exit_timeout.load() != std::numeric_limits<uint64_t>::max())
+            {
+                m_exit_timeout.store(0);
+                m_em_listening = false;
+                break;
+            }
+            std::lock_guard<std::mutex> lock(m_peers_mutex);
+            if (m_peers.find(event.peer) != m_peers.end())
+            {
+                std::shared_ptr<STKPeer>& peer = m_peers.at(event.peer);
+                stk_event = new Event(&event, peer);
+                m_peers.erase(event.peer);
+            }
+        }
+
+        std::unique_lock<std::mutex> lock(m_peers_mutex);
+        if (!stk_event && m_peers.find(event.peer) != m_peers.end())
+        {
+            std::shared_ptr<STKPeer> peer = m_peers.at(event.peer);
+            lock.unlock();
+            if (isPingPacket(event.packet->data, event.packet->dataLength))
+            {
+                BareNetworkString ping_packet((char*)event.packet->data,
+                    (int)event.packet->dataLength);
+                std::map<uint32_t, uint32_t> peer_pings;
+                ping_packet.skip((int)g_ping_packet.size());
+                uint64_t server_time = ping_packet.getUInt64();
+                unsigned peer_size = ping_packet.getUInt8();
+                for (unsigned i = 0; i < peer_size; i++)
+                {
+                    unsigned host_id = ping_packet.getUInt32();
+                    unsigned ping = ping_packet.getUInt32();
+                    peer_pings[host_id] = ping;
+                }
+                const uint32_t client_ping =
+                    peer_pings.find(m_host_id) != peer_pings.end() ?
+                    peer_pings.at(m_host_id) : 0;
+                uint32_t remaining_time = std::numeric_limits<uint32_t>::max();
+                uint32_t progress = std::numeric_limits<uint32_t>::max();
+                std::string current_track;
+                try
+                {
+                    remaining_time = ping_packet.getUInt32();
+                    progress = ping_packet.getUInt32();
+                    ping_packet.decodeString(&current_track);
+                }
+                catch (std::exception&)
+                {
+                }
+                if (client_ping > 0 && m_nts)
+                    m_nts->addAndSetTime(client_ping, server_time);
+                if (need_ping_update)
+                {
+                    m_peer_pings.lock();
+                    std::swap(m_peer_pings.getData(), peer_pings);
+                    m_peer_pings.unlock();
+                    m_client_ping.store(client_ping, std::memory_order_relaxed);
+                    if (lp)
+                    {
+                        lp->setGameStartedProgress(
+                            std::make_pair(remaining_time, progress));
+                        lp->storePlayingTrack(current_track);
+                    }
+                }
+                enet_packet_destroy(event.packet);
+                continue;
+            }
+            try
+            {
+                stk_event = new Event(&event, peer);
+            }
+            catch (std::exception& e)
+            {
+                Log::warn("STKHost", "%s", e.what());
+                enet_packet_destroy(event.packet);
+                continue;
+            }
+        }
+        else if (!stk_event)
+        {
+            enet_packet_destroy(event.packet);
+            continue;
+        }
+
+        auto pm = ProtocolManager::lock();
+        if (pm && !pm->isExiting())
+            pm->propagateEvent(stk_event);
+        else
+            delete stk_event;
+    }
+}   // pollOnce
+#endif
 
 // ----------------------------------------------------------------------------
 /** \brief Thread function checking if data is received.

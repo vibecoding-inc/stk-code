@@ -194,6 +194,13 @@ public:
     void      requestTerminate(std::shared_ptr<Protocol> protocol);
     void      findAndTerminate(ProtocolType type);
     void      update(int ticks);
+#ifdef __EMSCRIPTEN__
+    void      pollAsynchronousUpdate()
+    {
+        if (!m_exit.load())
+            asynchronousUpdate();
+    }
+#endif
     // ------------------------------------------------------------------------
     bool isExiting() const                            { return m_exit.load(); }
     // ------------------------------------------------------------------------
