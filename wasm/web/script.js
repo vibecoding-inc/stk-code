@@ -3,6 +3,7 @@ import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import { init_discord_activity } from "/discord-activity.js";
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
+import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
 import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
 let db = null;
@@ -536,6 +537,18 @@ async function main() {
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
   }
+
+  globalThis.stkLanBridge = create_lan_bridge({
+    get_url: () => resolve_ws_url(config.lan_gateway_url || "/api/lan", globalThis.location),
+    get_credentials: () => {
+      let token = globalThis.discordAccessToken;
+      let instance_id = globalThis.discordSdk && globalThis.discordSdk.instanceId;
+      if (!token || !instance_id) return null;
+      return {access_token: token, instance_id};
+    },
+    get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
+    logger: console,
+  });
 
   start_button.onclick = start_game;
   start_button.disabled = false;

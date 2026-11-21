@@ -39,6 +39,7 @@ export async function init_discord_activity({
     let auth = await discord_sdk.commands.authenticate({access_token: result.access_token});
     global_scope.discordSdk = discord_sdk;
     global_scope.discordAuth = auth;
+    global_scope.discordAccessToken = result.access_token;
     logger.log(`Discord login succeeded for ${auth.user.username}.`);
     return auth;
   }
