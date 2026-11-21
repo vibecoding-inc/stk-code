@@ -94,8 +94,8 @@ COPY --from=stk-assets-prep /assets/data /usr/share/supertuxkart/data
 
 ENV GATEWAY_LISTEN_ADDR=0.0.0.0:8080 \
     STK_SERVER_BIN=/usr/local/bin/supertuxkart \
-    STK_DATA_DIR=/usr/share/supertuxkart/data \
-    SUPERTUXKART_DATADIR=/usr/share/supertuxkart/data \
+    STK_DATA_DIR=/usr/share/supertuxkart \
+    SUPERTUXKART_DATADIR=/usr/share/supertuxkart \
     PORT_RANGE_START=30000 \
     PORT_RANGE_END=30016 \
     MAX_PLAYERS_PER_ROOM=16 \

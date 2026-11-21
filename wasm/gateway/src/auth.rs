@@ -87,8 +87,6 @@ struct CachedUser {
 struct DiscordUserResponse {
     id: String,
     username: String,
-    #[serde(default)]
-    global_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,7 +165,6 @@ impl DiscordApiVerifier {
                     .json()
                     .await
                     .map_err(|e| AuthError::Upstream(format!("users/@me parse failed: {e}")))?;
-                let display = user.global_name.unwrap_or(user.username);
                 let mut cache = self.user_cache.lock().await;
                 if cache.len() > 4096 {
                     let now = Instant::now();
@@ -177,11 +174,11 @@ impl DiscordApiVerifier {
                     key,
                     CachedUser {
                         user_id: user.id.clone(),
-                        username: display.clone(),
+                        username: user.username.clone(),
                         expires_at: Instant::now() + self.cache_ttl,
                     },
                 );
-                Ok((user.id, display))
+                Ok((user.id, user.username))
             }
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(AuthError::InvalidToken),
             status => Err(AuthError::Upstream(format!(
