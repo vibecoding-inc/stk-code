@@ -60,9 +60,9 @@
       //so cancel running main the first time around so we can store when it is ready
       globalThis.ready = false;
       var real_run = run;
-      run = () => {
+      run = (args) => {
         if (globalThis.ready) {
-          real_run();
+          real_run(args);
         }
         globalThis.ready = true;
       }
@@ -71,18 +71,21 @@
 
     <style>
       :root {
-        --stk-sky-top: #103b7a;
-        --stk-sky-mid: #1a5eb8;
-        --stk-sky-bot: #0b1c3d;
-        --stk-card-bg: rgba(13, 28, 58, 0.92);
-        --stk-card-border: rgba(120, 195, 255, 0.35);
+        --stk-sky-top: #0f4ea3;
+        --stk-sky-mid: #1f7ae0;
+        --stk-sky-bot: #0a1f47;
+        --stk-card-bg: rgba(11, 27, 58, 0.93);
+        --stk-card-border: #5bb8ff;
         --stk-gold: #ffd43b;
-        --stk-gold-dark: #f08c00;
+        --stk-gold-dark: #e67700;
+        --stk-red: #fa5252;
         --stk-green: #40c057;
+        --stk-green-bright: #51cf66;
         --stk-green-dark: #2b8a3e;
         --stk-blue: #339af0;
-        --stk-text: #f1f5ff;
-        --stk-muted: #b3c7e6;
+        --stk-blue-dark: #1864ab;
+        --stk-text: #f8fbff;
+        --stk-muted: #b8d0f0;
       }
       * {
         font-family: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -94,11 +97,11 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background: radial-gradient(circle at 50% 20%, var(--stk-sky-mid), var(--stk-sky-top) 48%, var(--stk-sky-bot));
+        background: radial-gradient(circle at 50% 15%, var(--stk-sky-mid), var(--stk-sky-top) 50%, var(--stk-sky-bot));
         color: var(--stk-text);
       }
       #canvas {
-        background-color: #0b1c3d;
+        background-color: #0a1f47;
         position: absolute;
         top: 0;
         left: 0;
@@ -114,20 +117,31 @@
         align-items: center;
         justify-content: center;
         padding: 16px;
-        background: radial-gradient(circle at 50% 20%, rgba(26, 94, 184, 0.88), rgba(11, 28, 61, 0.94));
+        background:
+          repeating-linear-gradient(
+            -25deg,
+            rgba(255, 255, 255, 0.03) 0px,
+            rgba(255, 255, 255, 0.03) 24px,
+            transparent 24px,
+            transparent 48px
+          ),
+          radial-gradient(circle at 50% 12%, rgba(36, 132, 232, 0.92), rgba(10, 31, 71, 0.96));
       }
       .launcher-card {
         width: min(94vw, 560px);
         max-height: 92vh;
         overflow-y: auto;
-        background: var(--stk-card-bg);
-        border: 2px solid var(--stk-card-border);
-        border-radius: 18px;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        background: linear-gradient(180deg, rgba(16, 40, 84, 0.96), var(--stk-card-bg));
+        border: 3px solid var(--stk-card-border);
+        border-radius: 22px;
+        box-shadow:
+          0 22px 54px rgba(0, 0, 0, 0.6),
+          0 0 0 1px rgba(255, 255, 255, 0.14) inset,
+          0 2px 0 rgba(255, 255, 255, 0.25) inset;
         overflow-x: hidden;
       }
       .checkered-bar {
-        height: 10px;
+        height: 12px;
         background-image:
           linear-gradient(45deg, #ffffff 25%, transparent 25%),
           linear-gradient(-45deg, #ffffff 25%, transparent 25%),
@@ -135,8 +149,8 @@
           linear-gradient(-45deg, transparent 75%, #ffffff 75%);
         background-size: 16px 16px;
         background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-        background-color: #141c2f;
-        opacity: 0.9;
+        background-color: #121b2e;
+        border-bottom: 3px solid var(--stk-red);
       }
       .card-body {
         padding: 20px 22px 18px;
@@ -145,34 +159,64 @@
         display: flex;
         align-items: center;
         gap: 14px;
-        margin-bottom: 12px;
+        margin-bottom: 10px;
       }
       #header_bar img {
-        width: 56px;
-        height: 56px;
+        width: 60px;
+        height: 60px;
         flex-shrink: 0;
-        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.45));
+        filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.5));
+      }
+      .title-group {
+        flex: 1;
+        min-width: 0;
       }
       .title-group h1 {
         margin: 0;
-        font-size: clamp(22px, 4.5vw, 28px);
-        font-weight: 800;
-        letter-spacing: 0.3px;
+        font-size: clamp(23px, 4.8vw, 30px);
+        font-weight: 900;
+        letter-spacing: 0.5px;
         color: var(--stk-gold);
-        text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+        text-shadow:
+          0 2px 0 var(--stk-gold-dark),
+          0 4px 10px rgba(0, 0, 0, 0.55);
       }
       .title-subtitle {
-        margin: 2px 0 0;
+        margin: 3px 0 0;
         font-size: 13px;
         color: var(--stk-muted);
       }
+      #player_badge {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: rgba(51, 154, 240, 0.24);
+        border: 1px solid rgba(116, 192, 252, 0.45);
+        font-size: 12px;
+        font-weight: 700;
+        color: #e7f5ff;
+        width: fit-content;
+      }
+      #player_badge.is-visible {
+        display: inline-flex;
+      }
+      .player-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--stk-green-bright);
+        box-shadow: 0 0 6px var(--stk-green-bright);
+      }
       .section-label {
         margin: 14px 0 8px;
-        font-size: 13px;
-        font-weight: 700;
+        font-size: 12.5px;
+        font-weight: 800;
         text-transform: uppercase;
-        letter-spacing: 0.8px;
-        color: #d7e6ff;
+        letter-spacing: 0.9px;
+        color: #d7ebff;
       }
       .quality-grid {
         display: grid;
@@ -186,24 +230,25 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 4px;
-        padding: 14px 10px;
-        min-height: 78px;
-        border-radius: 12px;
-        border: 2px solid rgba(130, 185, 255, 0.28);
-        background: rgba(255, 255, 255, 0.06);
+        gap: 3px;
+        padding: 13px 10px;
+        min-height: 76px;
+        border-radius: 14px;
+        border: 2px solid rgba(130, 195, 255, 0.32);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
         color: var(--stk-text);
+        box-shadow: 0 3px 0 rgba(5, 14, 34, 0.65);
         transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
       }
       .quality-btn:hover:not(:disabled) {
         transform: translateY(-2px);
-        border-color: rgba(255, 212, 59, 0.75);
-        background: rgba(51, 154, 240, 0.22);
+        border-color: rgba(255, 212, 59, 0.85);
+        background: linear-gradient(180deg, rgba(51, 154, 240, 0.34), rgba(24, 100, 171, 0.42));
       }
       .quality-btn.is-selected {
         border-color: var(--stk-gold);
-        background: linear-gradient(180deg, rgba(51, 154, 240, 0.42), rgba(24, 100, 171, 0.58));
-        box-shadow: 0 0 0 2px rgba(255, 212, 59, 0.35), 0 8px 18px rgba(0, 0, 0, 0.35);
+        background: linear-gradient(180deg, rgba(51, 154, 240, 0.52), rgba(24, 100, 171, 0.72));
+        box-shadow: 0 0 0 2px rgba(255, 212, 59, 0.35), 0 5px 0 rgba(12, 42, 92, 0.85);
       }
       .quality-btn:disabled {
         cursor: not-allowed;
@@ -215,49 +260,87 @@
       }
       .quality-size {
         font-size: 12px;
-        font-weight: 600;
+        font-weight: 700;
         color: var(--stk-gold);
       }
       .quality-hint {
         font-size: 11px;
         color: var(--stk-muted);
       }
-      #start_button {
-        width: 100%;
+      .action-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
         margin-top: 16px;
-        padding: 15px 18px;
-        border: none;
-        border-radius: 12px;
+      }
+      .stk-action-btn {
+        width: 100%;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-radius: 14px;
         cursor: pointer;
-        font-size: 18px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
+        font-weight: 900;
+        letter-spacing: 0.6px;
         text-transform: uppercase;
         color: #ffffff;
-        background: linear-gradient(180deg, var(--stk-green), var(--stk-green-dark));
-        box-shadow: 0 5px 0 #1b5e2a, 0 10px 20px rgba(0, 0, 0, 0.38);
-        transition: transform 0.1s ease, filter 0.12s ease;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.1s ease, filter 0.12s ease, box-shadow 0.1s ease;
+      }
+      .stk-action-btn::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 50% 0;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.02));
+        pointer-events: none;
+      }
+      #start_button {
+        padding: 15px 18px;
+        font-size: 18px;
+        border-color: rgba(255, 232, 130, 0.65);
+        background: linear-gradient(180deg, var(--stk-green-bright), var(--stk-green) 52%, var(--stk-green-dark));
+        text-shadow: 0 2px 0 rgba(15, 70, 25, 0.75);
+        box-shadow: 0 5px 0 #185726, 0 10px 22px rgba(0, 0, 0, 0.42);
       }
       #start_button:hover:not(:disabled) {
-        filter: brightness(1.08);
+        filter: brightness(1.07);
         transform: translateY(-1px);
       }
       #start_button:active:not(:disabled) {
-        transform: translateY(2px);
-        box-shadow: 0 2px 0 #1b5e2a, 0 4px 10px rgba(0, 0, 0, 0.35);
+        transform: translateY(3px);
+        box-shadow: 0 2px 0 #185726, 0 4px 10px rgba(0, 0, 0, 0.35);
       }
-      #start_button:disabled {
+      #secondary_start_button {
+        display: none;
+        padding: 11px 16px;
+        font-size: 14px;
+        border-color: rgba(145, 205, 255, 0.5);
+        background: linear-gradient(180deg, #3ba2f5, var(--stk-blue) 52%, var(--stk-blue-dark));
+        text-shadow: 0 1px 0 rgba(10, 35, 80, 0.7);
+        box-shadow: 0 4px 0 #104278, 0 6px 14px rgba(0, 0, 0, 0.32);
+      }
+      #secondary_start_button.is-visible {
+        display: block;
+      }
+      #secondary_start_button:hover:not(:disabled) {
+        filter: brightness(1.08);
+        transform: translateY(-1px);
+      }
+      #secondary_start_button:active:not(:disabled) {
+        transform: translateY(2px);
+        box-shadow: 0 2px 0 #104278, 0 3px 8px rgba(0, 0, 0, 0.3);
+      }
+      .stk-action-btn:disabled {
         cursor: not-allowed;
         filter: grayscale(0.45);
-        opacity: 0.72;
+        opacity: 0.7;
         box-shadow: 0 3px 0 #1d2d44;
       }
       .progress-panel {
         margin-top: 14px;
         padding: 10px 12px;
-        border-radius: 10px;
-        background: rgba(6, 15, 34, 0.65);
-        border: 1px solid rgba(120, 195, 255, 0.22);
+        border-radius: 12px;
+        background: rgba(6, 15, 34, 0.72);
+        border: 1px solid rgba(120, 195, 255, 0.28);
       }
       .progress-row {
         display: flex;
@@ -295,7 +378,7 @@
         height: 10px;
         width: 100%;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.14);
         overflow: hidden;
       }
       .progress-fill {
@@ -312,7 +395,7 @@
       .credits {
         margin-top: 14px;
         padding-top: 12px;
-        border-top: 1px solid rgba(120, 195, 255, 0.18);
+        border-top: 1px solid rgba(120, 195, 255, 0.2);
         font-size: 11.5px;
         line-height: 1.5;
         color: var(--stk-muted);
@@ -360,6 +443,10 @@
             <div class="title-group">
               <h1>SuperTuxKart</h1>
               <p class="title-subtitle">WebAssembly Edition &bull; ~500 MiB RAM required</p>
+              <div id="player_badge">
+                <span class="player-dot" aria-hidden="true"></span>
+                <span id="player_badge_text"></span>
+              </div>
             </div>
           </div>
 
@@ -382,7 +469,10 @@
             </button>
           </div>
 
-          <button id="start_button" type="button" disabled>Start Game</button>
+          <div class="action-stack">
+            <button id="start_button" class="stk-action-btn" type="button" disabled>Start Game</button>
+            <button id="secondary_start_button" class="stk-action-btn" type="button" disabled>Singleplayer / Main Menu</button>
+          </div>
 
           <div class="progress-panel" id="progress_panel">
             <div class="progress-row">

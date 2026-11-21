@@ -18,6 +18,9 @@ let idbfs_mount = null;
 let data_version = 1;
 
 let start_button = document.getElementById("start_button");
+let secondary_start_button = document.getElementById("secondary_start_button");
+let player_badge = document.getElementById("player_badge");
+let player_badge_text = document.getElementById("player_badge_text");
 let status_text = document.getElementById("status_text");
 let info_container = document.getElementById("info_container");
 let loading_spinner = document.getElementById("loading_spinner");
@@ -550,10 +553,35 @@ async function main() {
     logger: console,
   });
 
-  start_button.onclick = start_game;
+  if (discord_username && player_badge && player_badge_text) {
+    player_badge_text.textContent = `Playing as ${discord_username}`;
+    player_badge.classList.add("is-visible");
+  }
+
+  let can_auto_join_lobby = Boolean(
+    globalThis.stkLanBridge &&
+    typeof globalThis.stkLanBridge.isAvailable === "function" &&
+    globalThis.stkLanBridge.isAvailable()
+  );
+
+  if (can_auto_join_lobby) {
+    start_button.textContent = "Join Activity Lobby";
+    start_button.onclick = () => start_game({connect_to_lobby: true});
+    if (secondary_start_button) {
+      secondary_start_button.classList.add("is-visible");
+      secondary_start_button.disabled = false;
+      secondary_start_button.onclick = () => start_game({connect_to_lobby: false});
+    }
+  }
+  else {
+    start_button.textContent = "Start Game";
+    start_button.onclick = () => start_game({connect_to_lobby: false});
+  }
   start_button.disabled = false;
   set_loading_state({
-    text: "Ready to race! Choose texture quality and press Start Game.",
+    text: can_auto_join_lobby
+      ? "Ready to race! Join your Discord Activity lobby or open the main menu."
+      : "Ready to race! Choose texture quality and press Start Game.",
     percent: 100,
     indeterminate: false,
     spinning: false,
@@ -561,9 +589,10 @@ async function main() {
   if (telemetry) telemetry.flush();
 }
 
-async function start_game() {
+async function start_game({connect_to_lobby = false} = {}) {
   game_started = true;
   start_button.disabled = true;
+  if (secondary_start_button) secondary_start_button.disabled = true;
   for (let btn of quality_buttons) btn.disabled = true;
   set_loading_state({text: "Loading game files...", indeterminate: true, spinning: true});
   if (telemetry) {
@@ -571,20 +600,28 @@ async function start_game() {
   }
   log_lifecycle("start_clicked", {
     quality: selected_quality,
+    connect_to_lobby,
     viewport: `${window.innerWidth}x${window.innerHeight}`,
   });
   try {
     await load_data();
     await wait_for_frame();
-    set_loading_state({text: "Launching SuperTuxKart...", indeterminate: true, spinning: true});
+    set_loading_state({
+      text: connect_to_lobby ? "Joining Activity Lobby..." : "Launching SuperTuxKart...",
+      indeterminate: true,
+      spinning: true,
+    });
 
     await wait_for_frame();
+    let launch_args = connect_to_lobby ? ["--connect-now=10.0.0.1:2759"] : [];
     log_lifecycle("engine_launch", {
       quality: selected_quality,
+      connect_to_lobby,
       viewport: `${window.innerWidth}x${window.innerHeight}`,
     });
     if (telemetry) telemetry.flush();
-    run();
+    Module.arguments = launch_args;
+    run(launch_args);
     info_container.style.zIndex = 0;
     info_container.style.display = "none";
     sync_idbfs();
@@ -608,6 +645,9 @@ async function start_game() {
       spinning: false,
     });
     start_button.disabled = false;
+    if (secondary_start_button && secondary_start_button.classList.contains("is-visible")) {
+      secondary_start_button.disabled = false;
+    }
     for (let btn of quality_buttons) btn.disabled = false;
   }
 }
