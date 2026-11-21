@@ -2,6 +2,7 @@ import pako from "/vendor/pako.esm.js";
 import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import { init_discord_activity } from "/discord-activity.js";
+import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
 import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
 let db = null;
@@ -440,7 +441,7 @@ async function load_idbfs() {
 }
 
 function sync_idbfs(populate = false) {
-  if (syncing_fs) return;
+  if (!idbfs_mount || syncing_fs) return;
   syncing_fs = true;
   return new Promise((resolve, reject) => {
     idbfs_mount.type.syncfs(idbfs_mount, populate, (err) => {
@@ -511,9 +512,27 @@ async function main() {
     log_lifecycle("discord_init_done", {authenticated: Boolean(auth && auth.user)});
   }
   catch {}
-  set_loading_state({text: "Restoring saved profile...", indeterminate: true, spinning: true});
-  await load_idbfs();
-  log_lifecycle("idbfs_mounted");
+  let discord_username = get_discord_username(globalThis.discordAuth);
+  if (discord_username) {
+    // In Discord Activities, skip mounting/reading IDBFS so stale saved
+    // profiles or config files cannot override the Discord username or
+    // re-trigger first-run setup dialogs.
+    set_loading_state({text: `Setting up profile for ${discord_username}...`, indeterminate: true, spinning: true});
+    let profile = provision_discord_profile({
+      fs: FS,
+      discord_auth: globalThis.discordAuth,
+      env: typeof ENV !== "undefined" ? ENV : undefined,
+    });
+    log_lifecycle("discord_profile_provisioned", {
+      applied: profile.applied,
+      idbfs_skipped: true,
+    });
+  }
+  else {
+    set_loading_state({text: "Restoring saved profile...", indeterminate: true, spinning: true});
+    await load_idbfs();
+    log_lifecycle("idbfs_mounted");
+  }
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
   }
