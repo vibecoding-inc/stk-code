@@ -521,14 +521,20 @@ async function start_game() {
   if (telemetry) {
     telemetry.enrich({quality: selected_quality});
   }
-  log_lifecycle("start_clicked", {quality: selected_quality});
+  log_lifecycle("start_clicked", {
+    quality: selected_quality,
+    viewport: `${window.innerWidth}x${window.innerHeight}`,
+  });
   try {
     await load_data();
     await wait_for_frame();
     set_loading_state({text: "Launching SuperTuxKart...", indeterminate: true, spinning: true});
 
     await wait_for_frame();
-    log_lifecycle("engine_launch", {quality: selected_quality});
+    log_lifecycle("engine_launch", {
+      quality: selected_quality,
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+    });
     if (telemetry) telemetry.flush();
     run();
     info_container.style.zIndex = 0;

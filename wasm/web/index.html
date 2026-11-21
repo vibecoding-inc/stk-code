@@ -46,6 +46,12 @@
         mod.onAbort = function (what) {
           emit("error", "error", "Emscripten abort: " + String(what), true);
         };
+        window.addEventListener("error", function (event) {
+          var msg = event && event.error && event.error.stack
+            ? event.error.stack
+            : (event && event.message ? event.message : "Unknown early window error");
+          emit("error", "error", "Early error: " + String(msg), true);
+        });
       })();
     </script>
     <script src="/game/supertuxkart.js"></script>

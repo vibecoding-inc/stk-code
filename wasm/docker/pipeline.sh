@@ -61,8 +61,7 @@ GAME_DIR="$WASM_DIR/web/game"
 #      is set.
 if [ -n "${SKIP_BUILD_IF_PRESENT:-}" ] \
     && [ -f "$GAME_DIR/supertuxkart.js" ] \
-    && [ -f "$GAME_DIR/supertuxkart.wasm" ] \
-    && [ -f "$GAME_DIR/supertuxkart.worker.js" ]; then
+    && [ -f "$GAME_DIR/supertuxkart.wasm" ]; then
     echo "Compiled wasm artifacts already present; skipping deps and wasm build."
 else
     "$WASM_DIR/build_deps.sh"

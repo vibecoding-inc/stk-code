@@ -52,7 +52,6 @@ jobs:
           path: |
             wasm/web/game/supertuxkart.js
             wasm/web/game/supertuxkart.wasm
-            wasm/web/game/supertuxkart.worker.js
           key: wasm-bin-${{ hashFiles('src/**', 'lib/**', 'CMakeLists.txt', 'sources.cmake', 'cmake/**', 'wasm/build.sh', 'wasm/build_deps.sh', 'wasm/patch_js.py', 'wasm/fragments/**', 'wasm/docker/Dockerfile') }}
 
       # Look up the current stk-assets SVN revision directly over HTTPS so we

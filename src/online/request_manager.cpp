@@ -81,7 +81,8 @@ namespace Online
     // ------------------------------------------------------------------------
     RequestManager::~RequestManager()
     {
-        m_thread.join();
+        if (m_thread.joinable())
+            m_thread.join();
         curl_global_cleanup();
     }   // ~RequestManager
 
@@ -97,6 +98,12 @@ namespace Online
      */
     void RequestManager::startNetworkThread()
     {
+#ifdef __EMSCRIPTEN__
+        // Single-threaded WASM build (no SharedArrayBuffer / pthreads, required
+        // for Discord Activities): do not spawn the background HTTP thread.
+        Log::info("RequestManager", "Network thread disabled on single-threaded Emscripten build.");
+        return;
+#else
         m_thread = std::thread(std::bind(mainLoop, this));
         // In case that login id was not saved (or first start of stk),
         // current player would not be defined at this stage.
@@ -107,6 +114,7 @@ namespace Online
         {
             PlayerManager::resumeSavedSession();
         }
+#endif
     }   // startNetworkThread
 
     // ------------------------------------------------------------------------
@@ -117,6 +125,10 @@ namespace Online
      */
     void RequestManager::stopNetworkThread()
     {
+#ifdef __EMSCRIPTEN__
+        m_abort.setAtomic(true);
+        return;
+#endif
         // This will queue a sign-out or client-quit request
         PlayerManager::onSTKQuit();
 
@@ -147,6 +159,10 @@ namespace Online
      */
     void RequestManager::addRequest(std::shared_ptr<Online::Request> request)
     {
+#ifdef __EMSCRIPTEN__
+        Log::debug("RequestManager", "Ignoring HTTP request on single-threaded Emscripten build.");
+        return;
+#endif
         if (UserConfigParams::m_internet_status == RequestManager::IPERM_NOT_ALLOWED
             && request->getType() != Request::RT_QUIT)
         {

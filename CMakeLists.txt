@@ -96,8 +96,6 @@ if(EMSCRIPTEN)
     set(OGGVORBIS_VORBISFILE_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libvorbisfile.a")
     set(OGGVORBIS_VORBIS_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/prefix/lib/libvorbis.a")
 
-    set(PTHREAD_LIBRARY "${CMAKE_SOURCE_DIR}/wasm/emsdk/upstream")
-
     set(USE_WIIUSE 0)
     set(USE_DNS_C 1)
     set(USE_GLES2 1)
@@ -110,27 +108,17 @@ if(EMSCRIPTEN)
     add_definitions(-D_IRR_COMPILE_WITH_OGLES2_)
     add_definitions(-DDISABLE_RPC)
 
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -pthread")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -pthread")
+    # Build single-threaded (no -pthread / SharedArrayBuffer) so the game runs
+    # inside Discord Activities, whose host iframe is not cross-origin isolated
+    # (crossOriginIsolated=false, SharedArrayBuffer unavailable).
+    # SPTextureManager, SFXManager, NewsManager, and RequestManager avoid
+    # spawning background threads under __EMSCRIPTEN__.
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -sUSE_SDL=2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm")
 
-    # STK renders through Irrlicht -> SDL2, whose Emscripten backend creates its
-    # WebGL context via EGL. Emscripten's EGL always creates that context on the
-    # browser main thread (eglCreateContext is proxied there and uses
-    # Module['canvas']) and the context cannot be made current on another pthread.
-    # Therefore main() and the whole GL/game loop MUST run on the browser main
-    # thread. An earlier attempt to move main() onto a pthread with
-    # PROXY_TO_PTHREAD failed for exactly this reason: neither OFFSCREENCANVAS_SUPPORT
-    # (canvas transfer, emscripten-core/emscripten#20547) nor OFFSCREEN_FRAMEBUFFER
-    # (ignored by EGL/SDL2) let SDL2 obtain a context off the main thread, so device
-    # creation aborted with "Could not initialise irrlicht device".
-    #
-    # STK still uses several std::thread workers. Pre-create a pthread pool so they
-    # can start even while the main thread is briefly busy inside Wasm (Workers
-    # cannot be spawned on demand while the main thread is blocked); POOL_SIZE_STRICT=0
-    # allows growth beyond the pool without warnings. Texture loading, which STK
-    # synchronously waits on during start-up, is run inline (no worker threads) on
-    # the web to avoid that startup deadlock (see SPTextureManager).
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web,worker -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency -sPTHREAD_POOL_SIZE_STRICT=0 -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
+    # STK renders through Irrlicht -> SDL2 on the browser main thread via
+    # Emscripten's EGL/WebGL2 backend.
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
 
     if(CMAKE_BUILD_TYPE MATCHES Debug)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --profiling")
@@ -668,7 +656,7 @@ if(APPLE AND NOT IOS)
             COMMAND ln -f -s ${PROJECT_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/bin/supertuxkart.app/Contents/Resources)
     endif()
 else()
-    if (NOT WIN32)
+    if (NOT WIN32 AND NOT EMSCRIPTEN)
         find_library(PTHREAD_LIBRARY NAMES pthread ${PTHREAD_NAMES} PATHS ${PROJECT_SOURCE_DIR}/${DEPENDENCIES}/lib)
         mark_as_advanced(PTHREAD_LIBRARY)
     endif()
@@ -708,7 +696,7 @@ else()
     else()
         add_executable(supertuxkart ${STK_SOURCES} ${STK_RESOURCES} ${STK_HEADERS})
     endif()
-    if (NOT WIN32)
+    if (NOT WIN32 AND NOT EMSCRIPTEN)
         target_link_libraries(supertuxkart ${PTHREAD_LIBRARY})
     endif()
 endif()

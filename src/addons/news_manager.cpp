@@ -93,9 +93,15 @@ void NewsManager::init(bool force_refresh)
     // thread anyway (and the addons menu is disabled as a result).
     if(UserConfigParams::m_internet_status==RequestManager::IPERM_ALLOWED)
     {
+#ifdef __EMSCRIPTEN__
+        // Single-threaded WASM build (no SharedArrayBuffer / pthreads, required
+        // for Discord Activities): do not spawn a background download thread.
+        Log::info("NewsManager", "Skipping news download thread on single-threaded Emscripten build.");
+#else
         CanBeDeleted::resetCanBeDeleted();
         m_download_thread = std::thread(std::bind(
             &NewsManager::downloadNews, this));
+#endif
     }
 }   //init
 
