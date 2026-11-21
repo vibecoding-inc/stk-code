@@ -41,10 +41,10 @@ test("build_players_xml sets current player and profile to the Discord username"
   assert.match(xml, /<\/players>/);
 });
 
-test("build_config_xml skips internet permission and login screen prompts", () => {
+test("build_config_xml enables internet permission and skips login screen prompt", () => {
   let xml = build_config_xml();
   assert.match(xml, /<stkconfig version="8" >/);
-  assert.match(xml, /<enable_internet value="2" \/>/);
+  assert.match(xml, /<enable_internet value="1" \/>/);
   assert.match(xml, /<always_show_login_screen value="false" \/>/);
 });
 
@@ -105,7 +105,7 @@ test("provision_discord_profile creates config directories and writes players.xm
 
   let config_xml = files.get("/home/web_user/.config/supertuxkart/config-0.10/config.xml");
   assert.ok(config_xml);
-  assert.match(config_xml, /<enable_internet value="2" \/>/);
+  assert.match(config_xml, /<enable_internet value="1" \/>/);
 });
 
 test("provision_discord_profile is a no-op when Discord auth is absent", () => {

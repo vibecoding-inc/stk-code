@@ -53,7 +53,7 @@ export function build_config_xml() {
   return [
     '<?xml version="1.0"?>',
     '<stkconfig version="8" >',
-    '    <enable_internet value="2" />',
+    '    <enable_internet value="1" />',
     '    <always_show_login_screen value="false" />',
     '</stkconfig>',
     '',
