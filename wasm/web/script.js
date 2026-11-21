@@ -627,7 +627,6 @@ async function start_game({connect_to_lobby = false} = {}) {
       viewport: `${window.innerWidth}x${window.innerHeight}`,
     });
     if (telemetry) telemetry.flush();
-    Module.arguments = launch_args;
     run(launch_args);
     info_container.style.zIndex = 0;
     info_container.style.display = "none";
