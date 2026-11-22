@@ -1,0 +1,831 @@
+// SuperTuxKart Discord Activity Time Trials backend (Cloudflare Workers + D1 + R2).
+//
+// Routes (handled under /api/timetrials/*):
+//   GET  /api/timetrials/challenges/:challenge_id  -> challenge config + leaderboard + ghost list
+//   GET  /api/timetrials/runs/:run_id/replay       -> streams gzipped .replay from R2
+//   POST /api/timetrials/runs                      -> uploads gzipped .replay, updates PB, refreshes Discord embeds
+
+import { verify_jwt } from "./jwt.mjs";
+import {
+  get_track,
+  get_difficulty_name,
+  format_time_ms,
+} from "./tracks.mjs";
+
+const MAX_REPLAY_BYTES = 512 * 1024; // 512 KiB gzipped
+const MAX_GHOSTS_RETURNED = 20;
+const EMBED_TOP_N = 10;
+const MAX_INTERACTION_FOLLOWUPS = 5;
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+
+const MEDALS = ["🥇", "🥈", "🥉"];
+
+function json_response(body, status = 200, extra_headers = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...extra_headers,
+    },
+  });
+}
+
+function extract_bearer(request) {
+  let header = request.headers.get("Authorization") || "";
+  if (!header.startsWith("Bearer ")) return null;
+  let token = header.slice("Bearer ".length).trim();
+  return token || null;
+}
+
+export async function authenticate_session(request, env) {
+  if (!env.JWT_SECRET) {
+    return {error: json_response({error: "JWT_SECRET is not configured."}, 503)};
+  }
+  let token = extract_bearer(request);
+  if (!token) {
+    return {error: json_response({error: "Missing Bearer session token."}, 401)};
+  }
+  let claims = await verify_jwt(token, env.JWT_SECRET);
+  if (!claims || !claims.sub || !claims.scope_type || !claims.scope_id) {
+    return {error: json_response({error: "Invalid or expired session token."}, 401)};
+  }
+  return {claims};
+}
+
+export async function upsert_user(db, {user_id, username, display_name}, now = Date.now()) {
+  if (!db || !user_id) return;
+  let safe_username = String(username || "Player").slice(0, 64);
+  let safe_display = String(display_name || safe_username).slice(0, 64);
+  await db
+    .prepare(
+      `INSERT INTO users (user_id, username, display_name, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         username = excluded.username,
+         display_name = excluded.display_name,
+         updated_at = excluded.updated_at`
+    )
+    .bind(user_id, safe_username, safe_display, now)
+    .run();
+}
+
+export async function ensure_scope_member(db, {scope_type, scope_id, user_id}, now = Date.now()) {
+  if (!db || !scope_type || !scope_id || !user_id) return;
+  await db
+    .prepare(
+      `INSERT INTO scope_members (scope_type, scope_id, user_id, joined_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(scope_type, scope_id, user_id) DO NOTHING`
+    )
+    .bind(scope_type, scope_id, user_id, now)
+    .run();
+}
+
+/**
+ * Queries the scope leaderboard for a specific track configuration.
+ * Joins scope_members with user_pbs so PBs automatically carry over across Guilds/DMs
+ * without leaking usernames to scopes the user has never participated in.
+ */
+export async function query_scope_leaderboard(
+  db,
+  {scope_type, scope_id, track, difficulty, laps, reverse, limit = 50}
+) {
+  let rows_result = await db
+    .prepare(
+      `SELECT u.user_id, u.display_name, u.username,
+              p.run_id, p.kart, p.kart_color, p.time_ms, p.updated_at
+       FROM scope_members sm
+       INNER JOIN user_pbs p
+         ON p.user_id = sm.user_id
+        AND p.track = ?
+        AND p.difficulty = ?
+        AND p.laps = ?
+        AND p.reverse = ?
+       INNER JOIN users u
+         ON u.user_id = sm.user_id
+       WHERE sm.scope_type = ? AND sm.scope_id = ?
+       ORDER BY p.time_ms ASC, p.updated_at ASC
+       LIMIT ?`
+    )
+    .bind(track, difficulty, laps, reverse ? 1 : 0, scope_type, scope_id, limit)
+    .all();
+
+  let count_row = await db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM scope_members sm
+       INNER JOIN user_pbs p
+         ON p.user_id = sm.user_id
+        AND p.track = ?
+        AND p.difficulty = ?
+        AND p.laps = ?
+        AND p.reverse = ?
+       WHERE sm.scope_type = ? AND sm.scope_id = ?`
+    )
+    .bind(track, difficulty, laps, reverse ? 1 : 0, scope_type, scope_id)
+    .first();
+
+  let entries = (rows_result && rows_result.results ? rows_result.results : []).map((row, idx) => ({
+    rank: idx + 1,
+    run_id: row.run_id,
+    user_id: row.user_id,
+    display_name: row.display_name || row.username || "Player",
+    kart: row.kart,
+    kart_color: typeof row.kart_color === "number" ? row.kart_color : 0,
+    time_ms: Number(row.time_ms),
+    updated_at: Number(row.updated_at),
+  }));
+
+  return {
+    entries,
+    total_players: Number(count_row && count_row.total ? count_row.total : entries.length),
+  };
+}
+
+/**
+ * Builds the Discord embed for a Time Trial challenge message.
+ */
+export function build_challenge_embed(challenge, {entries, total_players}) {
+  let track_info = get_track(challenge.track);
+  let track_name = track_info ? track_info.name : challenge.track;
+  let diff_name = get_difficulty_name(challenge.difficulty);
+  let dir_label = challenge.reverse ? "Reverse" : "Normal";
+
+  let top = entries.slice(0, EMBED_TOP_N);
+  let description;
+  if (top.length === 0) {
+    description = "No times recorded yet! Click **Play Time Trial** below to set the first record.";
+  }
+  else {
+    let lines = top.map((e) => {
+      let prefix = e.rank <= 3 ? MEDALS[e.rank - 1] : `\`#${e.rank}\``;
+      return `${prefix} **${e.display_name}** — \`${format_time_ms(e.time_ms)}\` (${e.kart})`;
+    });
+    description = lines.join("\n");
+  }
+
+  return {
+    title: `🏁 Time Trial — ${track_name}`,
+    color: 0x3b82f6,
+    description,
+    fields: [
+      {name: "Laps", value: String(challenge.laps), inline: true},
+      {name: "Difficulty", value: diff_name, inline: true},
+      {name: "Direction", value: dir_label, inline: true},
+    ],
+    footer: {
+      text: `${total_players} ${total_players === 1 ? "racer" : "racers"} • Race against up to ${MAX_GHOSTS_RETURNED} ghosts`,
+    },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export function build_challenge_components(challenge_id) {
+  return [
+    {
+      type: 1, // Action Row
+      components: [
+        {
+          type: 2, // Button
+          style: 1, // Primary (Blurple)
+          label: "Play Time Trial",
+          emoji: {name: "🏁"},
+          custom_id: `tt:play:${challenge_id}`,
+        },
+      ],
+    },
+  ];
+}
+
+async function edit_message_via_webhook({app_id, interaction_token, message_id, payload, fetch_impl}) {
+  let target = message_id || "@original";
+  let url = `${DISCORD_API_BASE}/webhooks/${encodeURIComponent(app_id)}/${encodeURIComponent(interaction_token)}/messages/${encodeURIComponent(target)}`;
+  let resp = await fetch_impl(url, {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  return resp.ok;
+}
+
+async function edit_message_via_bot({bot_token, channel_id, message_id, payload, fetch_impl}) {
+  if (!bot_token || !channel_id || !message_id) return false;
+  let url = `${DISCORD_API_BASE}/channels/${encodeURIComponent(channel_id)}/messages/${encodeURIComponent(message_id)}`;
+  let resp = await fetch_impl(url, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bot ${bot_token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  return resp.ok;
+}
+
+async function send_followup_via_webhook({app_id, interaction_token, payload, fetch_impl}) {
+  let url = `${DISCORD_API_BASE}/webhooks/${encodeURIComponent(app_id)}/${encodeURIComponent(interaction_token)}`;
+  let resp = await fetch_impl(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  return resp.ok;
+}
+
+async function send_message_via_bot({bot_token, channel_id, payload, fetch_impl}) {
+  if (!bot_token || !channel_id) return false;
+  let url = `${DISCORD_API_BASE}/channels/${encodeURIComponent(channel_id)}/messages`;
+  let resp = await fetch_impl(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bot ${bot_token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  return resp.ok;
+}
+
+/**
+ * Refreshes the clicked challenge embed (and the most recent embed for the same
+ * scope + track config if distinct), using the fresh button interaction_token
+ * first (works in DMs and User-Installed guilds) and falling back to Bot token.
+ */
+async function refresh_challenge_embeds({
+  env,
+  db,
+  challenge,
+  launch_row,
+  leaderboard,
+  now,
+  fetch_impl,
+}) {
+  let app_id = env.DISCORD_CLIENT_ID;
+  let bot_token = env.DISCORD_BOT_TOKEN;
+  let embed = build_challenge_embed(challenge, leaderboard);
+
+  let refreshed_message_ids = new Set();
+
+  // 1. Refresh the clicked challenge's embed
+  let clicked_payload = {
+    embeds: [embed],
+    components: build_challenge_components(challenge.challenge_id),
+  };
+  let clicked_msg_id = (launch_row && launch_row.message_id) || challenge.message_id;
+  let updated = false;
+
+  if (
+    app_id &&
+    launch_row &&
+    launch_row.interaction_token &&
+    launch_row.token_expires_at > now
+  ) {
+    try {
+      updated = await edit_message_via_webhook({
+        app_id,
+        interaction_token: launch_row.interaction_token,
+        message_id: clicked_msg_id,
+        payload: clicked_payload,
+        fetch_impl,
+      });
+    }
+    catch {
+      updated = false;
+    }
+  }
+  if (!updated && bot_token && clicked_msg_id && challenge.scope_type === "guild") {
+    try {
+      updated = await edit_message_via_bot({
+        bot_token,
+        channel_id: challenge.channel_id,
+        message_id: clicked_msg_id,
+        payload: clicked_payload,
+        fetch_impl,
+      });
+    }
+    catch {
+      updated = false;
+    }
+  }
+  if (clicked_msg_id) refreshed_message_ids.add(clicked_msg_id);
+
+  // 2. Also refresh the most recent embed for the same scope + config (if different)
+  try {
+    let recent = await db
+      .prepare(
+        `SELECT challenge_id, channel_id, message_id, interaction_token, token_expires_at
+         FROM challenges
+         WHERE scope_type = ? AND scope_id = ?
+           AND track = ? AND difficulty = ? AND laps = ? AND reverse = ?
+           AND challenge_id != ?
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .bind(
+        challenge.scope_type,
+        challenge.scope_id,
+        challenge.track,
+        challenge.difficulty,
+        challenge.laps,
+        challenge.reverse ? 1 : 0,
+        challenge.challenge_id
+      )
+      .first();
+
+    if (recent && recent.message_id && !refreshed_message_ids.has(recent.message_id)) {
+      let recent_payload = {
+        embeds: [embed],
+        components: build_challenge_components(recent.challenge_id),
+      };
+      let recent_ok = false;
+      if (app_id && recent.interaction_token && recent.token_expires_at > now) {
+        recent_ok = await edit_message_via_webhook({
+          app_id,
+          interaction_token: recent.interaction_token,
+          message_id: recent.message_id,
+          payload: recent_payload,
+          fetch_impl,
+        });
+      }
+      if (!recent_ok && bot_token && challenge.scope_type === "guild") {
+        await edit_message_via_bot({
+          bot_token,
+          channel_id: recent.channel_id,
+          message_id: recent.message_id,
+          payload: recent_payload,
+          fetch_impl,
+        });
+      }
+    }
+  }
+  catch {
+    // Best-effort secondary embed refresh
+  }
+}
+
+/**
+ * Announces a new #1 record in chat (fail-open).
+ * Uses the button interaction_token (within 15 min & 5-followup cap) so it works
+ * in DMs and User-Installed guilds, falling back to Bot token in guilds.
+ */
+async function announce_new_first_place({
+  env,
+  db,
+  challenge,
+  launch_row,
+  user_id,
+  display_name,
+  kart,
+  time_ms,
+  previous_first_ms,
+  now,
+  fetch_impl,
+}) {
+  let track_info = get_track(challenge.track);
+  let track_name = track_info ? track_info.name : challenge.track;
+  let delta_text = "";
+  if (typeof previous_first_ms === "number" && previous_first_ms > time_ms) {
+    let diff_s = ((previous_first_ms - time_ms) / 1000).toFixed(3);
+    delta_text = ` (−${diff_s}s)`;
+  }
+
+  let content = `🏆 **New 1st Place on ${track_name}!** <@${user_id}> (${display_name}) set **${format_time_ms(time_ms)}**${delta_text} with **${kart}**!`;
+  let payload = {
+    content,
+    allowed_mentions: {users: []},
+  };
+
+  let app_id = env.DISCORD_CLIENT_ID;
+  let sent = false;
+
+  if (
+    app_id &&
+    launch_row &&
+    launch_row.interaction_token &&
+    launch_row.token_expires_at > now &&
+    (launch_row.followups_used || 0) < MAX_INTERACTION_FOLLOWUPS
+  ) {
+    try {
+      sent = await send_followup_via_webhook({
+        app_id,
+        interaction_token: launch_row.interaction_token,
+        payload,
+        fetch_impl,
+      });
+      if (sent) {
+        await db
+          .prepare(
+            `UPDATE pending_launches
+             SET followups_used = followups_used + 1
+             WHERE user_id = ? AND channel_id = ?`
+          )
+          .bind(user_id, challenge.channel_id)
+          .run();
+      }
+    }
+    catch {
+      sent = false;
+    }
+  }
+
+  if (!sent && env.DISCORD_BOT_TOKEN && challenge.scope_type === "guild") {
+    try {
+      await send_message_via_bot({
+        bot_token: env.DISCORD_BOT_TOKEN,
+        channel_id: challenge.channel_id,
+        payload,
+        fetch_impl,
+      });
+    }
+    catch {
+      // Fail-open if bot is not installed in this guild
+    }
+  }
+}
+
+async function handleGetChallenge({request, env, challenge_id}) {
+  if (!env.TIME_TRIALS_DB) {
+    return json_response({error: "TIME_TRIALS_DB is not configured."}, 503);
+  }
+  let auth = await authenticate_session(request, env);
+  if (auth.error) return auth.error;
+  let {claims} = auth;
+
+  let challenge = await env.TIME_TRIALS_DB
+    .prepare("SELECT * FROM challenges WHERE challenge_id = ?")
+    .bind(challenge_id)
+    .first();
+
+  if (!challenge) {
+    return json_response({error: "Challenge not found."}, 404);
+  }
+  if (challenge.scope_type !== claims.scope_type || challenge.scope_id !== claims.scope_id) {
+    return json_response({error: "Forbidden: challenge belongs to another Discord context."}, 403);
+  }
+
+  let now = Date.now();
+  await ensure_scope_member(env.TIME_TRIALS_DB, {
+    scope_type: claims.scope_type,
+    scope_id: claims.scope_id,
+    user_id: claims.sub,
+  }, now);
+
+  let lb = await query_scope_leaderboard(env.TIME_TRIALS_DB, {
+    scope_type: challenge.scope_type,
+    scope_id: challenge.scope_id,
+    track: challenge.track,
+    difficulty: challenge.difficulty,
+    laps: challenge.laps,
+    reverse: Boolean(challenge.reverse),
+    limit: MAX_GHOSTS_RETURNED,
+  });
+
+  // Always include the requesting player's own PB in the ghost list even if outside top 20.
+  let ghosts = [...lb.entries];
+  let caller_in_top = ghosts.some((e) => e.user_id === claims.sub);
+  if (!caller_in_top) {
+    let my_pb = await env.TIME_TRIALS_DB
+      .prepare(
+        `SELECT u.user_id, u.display_name, u.username,
+                p.run_id, p.kart, p.kart_color, p.time_ms, p.updated_at
+         FROM user_pbs p
+         INNER JOIN users u ON u.user_id = p.user_id
+         WHERE p.user_id = ? AND p.track = ? AND p.difficulty = ? AND p.laps = ? AND p.reverse = ?`
+      )
+      .bind(claims.sub, challenge.track, challenge.difficulty, challenge.laps, challenge.reverse ? 1 : 0)
+      .first();
+
+    if (my_pb) {
+      ghosts.push({
+        rank: 0,
+        run_id: my_pb.run_id,
+        user_id: my_pb.user_id,
+        display_name: my_pb.display_name || my_pb.username || "Player",
+        kart: my_pb.kart,
+        kart_color: typeof my_pb.kart_color === "number" ? my_pb.kart_color : 0,
+        time_ms: Number(my_pb.time_ms),
+        updated_at: Number(my_pb.updated_at),
+      });
+    }
+  }
+
+  let track_info = get_track(challenge.track);
+  return json_response({
+    challenge: {
+      challenge_id: challenge.challenge_id,
+      track: challenge.track,
+      track_name: track_info ? track_info.name : challenge.track,
+      difficulty: challenge.difficulty,
+      laps: challenge.laps,
+      reverse: Boolean(challenge.reverse),
+    },
+    total_players: lb.total_players,
+    leaderboard: lb.entries,
+    ghosts: ghosts.map((g) => ({
+      run_id: g.run_id,
+      user_id: g.user_id,
+      display_name: g.display_name,
+      kart: g.kart,
+      time_ms: g.time_ms,
+      url: `/api/timetrials/runs/${encodeURIComponent(g.run_id)}/replay`,
+    })),
+  });
+}
+
+async function handleGetReplay({request, env, run_id}) {
+  if (!env.TIME_TRIALS_DB || !env.REPLAYS) {
+    return json_response({error: "Time Trials storage is not configured."}, 503);
+  }
+  let auth = await authenticate_session(request, env);
+  if (auth.error) return auth.error;
+  let {claims} = auth;
+
+  // Verify the replay belongs to a member of the caller's verified scope (privacy boundary).
+  let row = await env.TIME_TRIALS_DB
+    .prepare(
+      `SELECT p.r2_key, p.user_id
+       FROM user_pbs p
+       INNER JOIN scope_members sm
+         ON sm.user_id = p.user_id
+        AND sm.scope_type = ?
+        AND sm.scope_id = ?
+       WHERE p.run_id = ?`
+    )
+    .bind(claims.scope_type, claims.scope_id, run_id)
+    .first();
+
+  if (!row) {
+    return json_response({error: "Replay not found."}, 404);
+  }
+
+  let obj = await env.REPLAYS.get(row.r2_key);
+  if (!obj) {
+    return json_response({error: "Replay blob missing."}, 404);
+  }
+
+  return new Response(obj.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Encoding": "gzip",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
+async function handleSubmitRun({request, env, ctx, fetch_impl = fetch}) {
+  if (!env.TIME_TRIALS_DB || !env.REPLAYS) {
+    return json_response({error: "Time Trials storage is not configured."}, 503);
+  }
+  let auth = await authenticate_session(request, env);
+  if (auth.error) return auth.error;
+  let {claims} = auth;
+
+  let form;
+  try {
+    form = await request.formData();
+  }
+  catch {
+    return json_response({error: "Expected multipart/form-data."}, 400);
+  }
+
+  let metadata_raw = form.get("metadata");
+  let replay_file = form.get("replay");
+  if (typeof metadata_raw !== "string") {
+    return json_response({error: "Missing metadata JSON field."}, 400);
+  }
+  if (!replay_file || typeof replay_file === "string" || typeof replay_file.arrayBuffer !== "function") {
+    return json_response({error: "Missing replay file field."}, 400);
+  }
+  if (replay_file.size <= 0 || replay_file.size > MAX_REPLAY_BYTES) {
+    return json_response({error: "Replay file size out of allowed bounds."}, 413);
+  }
+
+  let meta;
+  try {
+    meta = JSON.parse(metadata_raw);
+  }
+  catch {
+    return json_response({error: "Invalid metadata JSON."}, 400);
+  }
+
+  let challenge_id = String(meta.challenge_id || "").trim();
+  let kart = String(meta.kart || "").trim().slice(0, 64);
+  let kart_color = Number.isFinite(Number(meta.kart_color)) ? Number(meta.kart_color) : 0;
+  let time_ms = Math.round(Number(meta.time_ms));
+  let replay_version = Number.isInteger(Number(meta.replay_version)) ? Number(meta.replay_version) : 4;
+
+  if (!challenge_id || !kart || !Number.isFinite(time_ms) || time_ms <= 0 || time_ms > 3600000) {
+    return json_response({error: "Invalid run metadata."}, 400);
+  }
+
+  let challenge = await env.TIME_TRIALS_DB
+    .prepare("SELECT * FROM challenges WHERE challenge_id = ?")
+    .bind(challenge_id)
+    .first();
+
+  if (!challenge) {
+    return json_response({error: "Challenge not found."}, 404);
+  }
+  if (challenge.scope_type !== claims.scope_type || challenge.scope_id !== claims.scope_id) {
+    return json_response({error: "Forbidden: challenge belongs to another Discord context."}, 403);
+  }
+
+  let now = Date.now();
+  await ensure_scope_member(env.TIME_TRIALS_DB, {
+    scope_type: challenge.scope_type,
+    scope_id: challenge.scope_id,
+    user_id: claims.sub,
+  }, now);
+
+  // Check current #1 in this scope BEFORE updating so we know if #1 changed.
+  let prev_top = await query_scope_leaderboard(env.TIME_TRIALS_DB, {
+    scope_type: challenge.scope_type,
+    scope_id: challenge.scope_id,
+    track: challenge.track,
+    difficulty: challenge.difficulty,
+    laps: challenge.laps,
+    reverse: Boolean(challenge.reverse),
+    limit: 1,
+  });
+  let prev_first = prev_top.entries[0] || null;
+
+  // Check user's existing canonical PB for this track configuration.
+  let existing_pb = await env.TIME_TRIALS_DB
+    .prepare(
+      `SELECT run_id, time_ms, r2_key
+       FROM user_pbs
+       WHERE user_id = ? AND track = ? AND difficulty = ? AND laps = ? AND reverse = ?`
+    )
+    .bind(claims.sub, challenge.track, challenge.difficulty, challenge.laps, challenge.reverse ? 1 : 0)
+    .first();
+
+  let previous_pb_ms = existing_pb ? Number(existing_pb.time_ms) : null;
+  let is_new_pb = previous_pb_ms === null || time_ms < previous_pb_ms;
+  let run_id = existing_pb ? existing_pb.run_id : null;
+
+  if (is_new_pb) {
+    run_id = crypto.randomUUID();
+    let r2_key = `replays/${challenge.track}/${run_id}.replay.gz`;
+    let replay_bytes = await replay_file.arrayBuffer();
+
+    await env.REPLAYS.put(r2_key, replay_bytes, {
+      httpMetadata: {
+        contentType: "text/plain; charset=utf-8",
+        contentEncoding: "gzip",
+      },
+      customMetadata: {
+        user_id: claims.sub,
+        track: challenge.track,
+        time_ms: String(time_ms),
+      },
+    });
+
+    await env.TIME_TRIALS_DB
+      .prepare(
+        `INSERT INTO user_pbs (
+           user_id, track, difficulty, laps, reverse,
+           run_id, kart, kart_color, time_ms, r2_key, replay_version, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, track, difficulty, laps, reverse) DO UPDATE SET
+           run_id = excluded.run_id,
+           kart = excluded.kart,
+           kart_color = excluded.kart_color,
+           time_ms = excluded.time_ms,
+           r2_key = excluded.r2_key,
+           replay_version = excluded.replay_version,
+           updated_at = excluded.updated_at`
+      )
+      .bind(
+        claims.sub,
+        challenge.track,
+        challenge.difficulty,
+        challenge.laps,
+        challenge.reverse ? 1 : 0,
+        run_id,
+        kart,
+        kart_color,
+        time_ms,
+        r2_key,
+        replay_version,
+        now
+      )
+      .run();
+
+    // Clean up superseded R2 object in the background.
+    if (existing_pb && existing_pb.r2_key) {
+      let cleanup = env.REPLAYS.delete(existing_pb.r2_key).catch(() => {});
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(cleanup);
+      }
+      else {
+        await cleanup;
+      }
+    }
+  }
+
+  let updated_lb = await query_scope_leaderboard(env.TIME_TRIALS_DB, {
+    scope_type: challenge.scope_type,
+    scope_id: challenge.scope_id,
+    track: challenge.track,
+    difficulty: challenge.difficulty,
+    laps: challenge.laps,
+    reverse: Boolean(challenge.reverse),
+    limit: MAX_GHOSTS_RETURNED,
+  });
+
+  let my_entry = updated_lb.entries.find((e) => e.user_id === claims.sub) || null;
+  let new_first = updated_lb.entries[0] || null;
+  let is_new_first = Boolean(
+    is_new_pb &&
+    new_first &&
+    new_first.user_id === claims.sub &&
+    (!prev_first || time_ms < prev_first.time_ms)
+  );
+
+  // Refresh Discord embed(s) and announce new #1 if applicable.
+  if (is_new_pb) {
+    let launch_row = await env.TIME_TRIALS_DB
+      .prepare(
+        `SELECT message_id, interaction_token, token_expires_at, followups_used
+         FROM pending_launches
+         WHERE user_id = ? AND channel_id = ?`
+      )
+      .bind(claims.sub, challenge.channel_id)
+      .first();
+
+    let discord_updates = (async () => {
+      await refresh_challenge_embeds({
+        env,
+        db: env.TIME_TRIALS_DB,
+        challenge,
+        launch_row,
+        leaderboard: updated_lb,
+        now,
+        fetch_impl,
+      });
+      if (is_new_first) {
+        await announce_new_first_place({
+          env,
+          db: env.TIME_TRIALS_DB,
+          challenge,
+          launch_row,
+          user_id: claims.sub,
+          display_name: claims.display_name || claims.username || "Player",
+          kart,
+          time_ms,
+          previous_first_ms: prev_first ? prev_first.time_ms : null,
+          now,
+          fetch_impl,
+        });
+      }
+    })();
+
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(discord_updates);
+    }
+    else {
+      await discord_updates;
+    }
+  }
+
+  return json_response({
+    run_id,
+    is_new_pb,
+    previous_pb_ms,
+    is_new_first,
+    rank: my_entry ? my_entry.rank : null,
+    total_players: updated_lb.total_players,
+    leaderboard: updated_lb.entries,
+  });
+}
+
+export async function handleTimeTrials({request, env, ctx, fetch_impl = fetch}) {
+  let url = new URL(request.url);
+  let path = url.pathname;
+
+  let challenge_match = path.match(/^\/api\/timetrials\/challenges\/([A-Za-z0-9_-]+)$/);
+  if (challenge_match) {
+    if (request.method !== "GET") {
+      return new Response("Method Not Allowed", {status: 405});
+    }
+    return handleGetChallenge({request, env, challenge_id: challenge_match[1]});
+  }
+
+  let replay_match = path.match(/^\/api\/timetrials\/runs\/([A-Za-z0-9_-]+)\/replay$/);
+  if (replay_match) {
+    if (request.method !== "GET") {
+      return new Response("Method Not Allowed", {status: 405});
+    }
+    return handleGetReplay({request, env, run_id: replay_match[1]});
+  }
+
+  if (path === "/api/timetrials/runs") {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", {status: 405});
+    }
+    return handleSubmitRun({request, env, ctx, fetch_impl});
+  }
+
+  return json_response({error: "Not Found"}, 404);
+}
