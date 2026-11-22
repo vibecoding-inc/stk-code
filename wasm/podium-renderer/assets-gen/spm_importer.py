@@ -247,7 +247,8 @@ def _build_blender_material(name, tex_path, mat_meta, use_vcolor):
     import bpy
 
     mat = bpy.data.materials.new(name=name)
-    mat.use_nodes = True
+    if bpy.app.version < (5, 0, 0):
+        mat.use_nodes = True
     nt = mat.node_tree
     nt.nodes.clear()
 

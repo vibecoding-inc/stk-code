@@ -119,7 +119,8 @@ def reset_scene(samples):
     # Soft studio world fill
     world = bpy.data.worlds.new("StudioWorld")
     scene.world = world
-    world.use_nodes = True
+    if bpy.app.version < (5, 0, 0):
+        world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
     if bg:
         bg.inputs["Color"].default_value = (0.38, 0.42, 0.50, 1.0)
@@ -165,7 +166,8 @@ def add_camera(name, loc, target, lens=62.0):
 
 def make_bsdf_material(name, color, metallic=0.0, roughness=0.4):
     mat = bpy.data.materials.new(name=name)
-    mat.use_nodes = True
+    if bpy.app.version < (5, 0, 0):
+        mat.use_nodes = True
     bsdf = mat.node_tree.nodes.get("Principled BSDF")
     bsdf.inputs["Base Color"].default_value = color
     bsdf.inputs["Metallic"].default_value = metallic

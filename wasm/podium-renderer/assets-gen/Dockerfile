@@ -1,7 +1,8 @@
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
-ARG BLENDER_VERSION=4.2.9
+ARG BLENDER_SERIES=5.2
+ARG BLENDER_VERSION=5.2.4
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -17,7 +18,7 @@ RUN apt-get update \
         libxkbcommon0 \
         libxrender1 \
         libxxf86vm1 \
-    && curl -fsSL "https://download.blender.org/release/Blender4.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+    && curl -fsSL "https://download.blender.org/release/Blender${BLENDER_SERIES}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
         -o /tmp/blender.tar.xz \
     && mkdir -p /opt/blender \
     && tar -xJf /tmp/blender.tar.xz --strip-components=1 -C /opt/blender \
