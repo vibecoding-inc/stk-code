@@ -1,0 +1,9 @@
+# Keep Docker build context minimal when building from repo root.
+*
+!wasm/podium-renderer/package.json
+!wasm/podium-renderer/src/**
+!wasm/podium-renderer/tests/**
+!wasm/podium-renderer/generated-assets/**
+!data/ttf/SigmarOne.otf
+!data/ttf/Cantarell-Regular.otf
+!data/ttf/wqy-microhei.ttf
