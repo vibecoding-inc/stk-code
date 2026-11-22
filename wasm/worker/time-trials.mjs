@@ -71,16 +71,46 @@ export async function upsert_user(db, {user_id, username, display_name, avatar =
     .run();
 }
 
-export async function ensure_scope_member(db, {scope_type, scope_id, user_id}, now = Date.now()) {
+export async function ensure_scope_member(
+  db,
+  {
+    scope_type,
+    scope_id,
+    user_id,
+    guild_nick = null,
+    guild_avatar = null,
+    update_guild_profile = false,
+  },
+  now = Date.now()
+) {
   if (!db || !scope_type || !scope_id || !user_id) return;
-  await db
-    .prepare(
-      `INSERT INTO scope_members (scope_type, scope_id, user_id, joined_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(scope_type, scope_id, user_id) DO NOTHING`
-    )
-    .bind(scope_type, scope_id, user_id, now)
-    .run();
+  let safe_nick = typeof guild_nick === "string" && guild_nick.trim() ? guild_nick.trim().slice(0, 64) : null;
+  let safe_guild_avatar = typeof guild_avatar === "string" && guild_avatar.trim()
+    ? guild_avatar.trim().slice(0, 128)
+    : null;
+
+  if (update_guild_profile) {
+    await db
+      .prepare(
+        `INSERT INTO scope_members (scope_type, scope_id, user_id, joined_at, guild_nick, guild_avatar)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope_type, scope_id, user_id) DO UPDATE SET
+           guild_nick = excluded.guild_nick,
+           guild_avatar = excluded.guild_avatar`
+      )
+      .bind(scope_type, scope_id, user_id, now, safe_nick, safe_guild_avatar)
+      .run();
+  }
+  else {
+    await db
+      .prepare(
+        `INSERT INTO scope_members (scope_type, scope_id, user_id, joined_at, guild_nick, guild_avatar)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope_type, scope_id, user_id) DO NOTHING`
+      )
+      .bind(scope_type, scope_id, user_id, now, safe_nick, safe_guild_avatar)
+      .run();
+  }
 }
 
 /**
@@ -95,6 +125,7 @@ export async function query_scope_leaderboard(
   let rows_result = await db
     .prepare(
       `SELECT u.user_id, u.display_name, u.username, u.avatar,
+              sm.guild_nick, sm.guild_avatar,
               p.run_id, p.kart, p.kart_color, p.time_ms, p.updated_at
        FROM scope_members sm
        INNER JOIN user_pbs p
@@ -127,12 +158,15 @@ export async function query_scope_leaderboard(
     .bind(track, difficulty, laps, reverse ? 1 : 0, scope_type, scope_id)
     .first();
 
+  let guild_id = scope_type === "guild" ? scope_id : null;
   let entries = (rows_result && rows_result.results ? rows_result.results : []).map((row, idx) => ({
     rank: idx + 1,
     run_id: row.run_id,
     user_id: row.user_id,
-    display_name: row.display_name || row.username || "Player",
+    display_name: row.guild_nick || row.display_name || row.username || "Player",
     avatar: row.avatar || null,
+    guild_avatar: row.guild_avatar || null,
+    guild_id,
     kart: row.kart,
     kart_color: typeof row.kart_color === "number" ? row.kart_color : 0,
     time_ms: Number(row.time_ms),
@@ -490,12 +524,25 @@ async function handleGetChallenge({request, env, challenge_id}) {
     let my_pb = await env.TIME_TRIALS_DB
       .prepare(
         `SELECT u.user_id, u.display_name, u.username, u.avatar,
+                sm.guild_nick, sm.guild_avatar,
                 p.run_id, p.kart, p.kart_color, p.time_ms, p.updated_at
          FROM user_pbs p
          INNER JOIN users u ON u.user_id = p.user_id
+         LEFT JOIN scope_members sm
+           ON sm.user_id = p.user_id
+          AND sm.scope_type = ?
+          AND sm.scope_id = ?
          WHERE p.user_id = ? AND p.track = ? AND p.difficulty = ? AND p.laps = ? AND p.reverse = ?`
       )
-      .bind(claims.sub, challenge.track, challenge.difficulty, challenge.laps, challenge.reverse ? 1 : 0)
+      .bind(
+        challenge.scope_type,
+        challenge.scope_id,
+        claims.sub,
+        challenge.track,
+        challenge.difficulty,
+        challenge.laps,
+        challenge.reverse ? 1 : 0
+      )
       .first();
 
     if (my_pb) {
@@ -503,8 +550,10 @@ async function handleGetChallenge({request, env, challenge_id}) {
         rank: 0,
         run_id: my_pb.run_id,
         user_id: my_pb.user_id,
-        display_name: my_pb.display_name || my_pb.username || "Player",
+        display_name: my_pb.guild_nick || my_pb.display_name || my_pb.username || "Player",
         avatar: my_pb.avatar || null,
+        guild_avatar: my_pb.guild_avatar || null,
+        guild_id: challenge.scope_type === "guild" ? challenge.scope_id : null,
         kart: my_pb.kart,
         kart_color: typeof my_pb.kart_color === "number" ? my_pb.kart_color : 0,
         time_ms: Number(my_pb.time_ms),
@@ -530,6 +579,8 @@ async function handleGetChallenge({request, env, challenge_id}) {
       user_id: g.user_id,
       display_name: g.display_name,
       avatar: g.avatar || null,
+      guild_avatar: g.guild_avatar || null,
+      guild_id: g.guild_id || null,
       kart: g.kart,
       time_ms: g.time_ms,
       url: `/api/timetrials/runs/${encodeURIComponent(g.run_id)}/replay`,
@@ -778,7 +829,7 @@ async function handleSubmitRun({request, env, ctx, fetch_impl = fetch}) {
           challenge,
           launch_row,
           user_id: claims.sub,
-          display_name: claims.display_name || claims.username || "Player",
+          display_name: (my_entry && my_entry.display_name) || claims.display_name || claims.username || "Player",
           kart,
           time_ms,
           previous_first_ms: prev_first ? prev_first.time_ms : null,

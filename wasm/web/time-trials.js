@@ -131,7 +131,12 @@ export function create_time_trials_bridge({
               headers: {Authorization: `Bearer ${token}`},
             });
             let avatar_promise = avatar_cache && typeof avatar_cache.ensureAvatar === "function"
-              ? avatar_cache.ensureAvatar({user_id: g.user_id, avatar: g.avatar || null})
+              ? avatar_cache.ensureAvatar({
+                  user_id: g.user_id,
+                  avatar: g.avatar || null,
+                  guild_id: g.guild_id || null,
+                  guild_avatar: g.guild_avatar || null,
+                })
               : Promise.resolve(null);
 
             let [r, avatar_path] = await Promise.all([replay_promise, avatar_promise]);

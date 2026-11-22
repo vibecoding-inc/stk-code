@@ -52,10 +52,21 @@ export function resolve_discord_cdn_base(location_obj = globalThis.location) {
 export function build_discord_avatar_url({
   user_id,
   avatar = null,
+  guild_id = null,
+  guild_avatar = null,
   cdn_base = "/.proxy/discord-cdn",
   size = 64,
 }) {
   let base = String(cdn_base || "/.proxy/discord-cdn").replace(/\/+$/, "");
+  if (
+    user_id &&
+    guild_id &&
+    guild_avatar &&
+    typeof guild_avatar === "string" &&
+    guild_avatar.trim()
+  ) {
+    return `${base}/guilds/${encodeURIComponent(guild_id)}/users/${encodeURIComponent(user_id)}/avatars/${encodeURIComponent(guild_avatar.trim())}.png?size=${size}`;
+  }
   if (user_id && avatar && typeof avatar === "string" && avatar.trim()) {
     return `${base}/avatars/${encodeURIComponent(user_id)}/${encodeURIComponent(avatar.trim())}.png?size=${size}`;
   }
@@ -135,33 +146,43 @@ export function create_discord_avatar_cache({
     return ct.toLowerCase().startsWith("image/");
   }
 
-  async function fetch_and_store({user_id, avatar}) {
+  async function fetch_and_store({user_id, avatar, guild_id = null, guild_avatar = null}) {
     let fs = get_fs();
     if (!fs || !user_id) return null;
 
     let safe_id = String(user_id).replace(/[^A-Za-z0-9_-]/g, "_");
-    let cache_key = `${safe_id}:${avatar || "default"}`;
+    let safe_gid = guild_id ? String(guild_id).replace(/[^A-Za-z0-9_-]/g, "_") : "";
+    let cache_key = `${safe_id}:${safe_gid}:${guild_avatar || ""}:${avatar || "default"}`;
     if (path_by_key.has(cache_key)) {
       return path_by_key.get(cache_key);
     }
 
-    let primary_url = build_discord_avatar_url({user_id, avatar, cdn_base, size});
-    let active_url = primary_url;
-    let used_fallback = false;
-    let resp = await fetch_impl(primary_url);
-
-    // Fall back to Discord default avatar if custom avatar hash returned 404.
-    if (!resp.ok && avatar) {
-      used_fallback = true;
-      active_url = build_discord_avatar_url({user_id, avatar: null, cdn_base, size});
-      resp = await fetch_impl(active_url);
+    // Build ordered fallback chain: guild avatar -> global avatar -> default embed avatar.
+    let candidates = [];
+    if (guild_id && guild_avatar) {
+      candidates.push(build_discord_avatar_url({user_id, guild_id, guild_avatar, cdn_base, size}));
     }
-    if (!resp.ok) {
-      logger.warn(`Failed to fetch Discord avatar for ${user_id} (${resp.status}) from ${active_url}`);
+    if (avatar) {
+      candidates.push(build_discord_avatar_url({user_id, avatar, cdn_base, size}));
+    }
+    candidates.push(build_discord_avatar_url({user_id, avatar: null, cdn_base, size}));
+
+    let resp = null;
+    let active_url = candidates[0];
+    let used_fallback = false;
+    for (let i = 0; i < candidates.length; i++) {
+      active_url = candidates[i];
+      used_fallback = i > 0;
+      resp = await fetch_impl(active_url);
+      if (resp.ok) break;
+    }
+    if (!resp || !resp.ok) {
+      let status = resp ? resp.status : 0;
+      logger.warn(`Failed to fetch Discord avatar for ${user_id} (${status}) from ${active_url}`);
       on_lifecycle("discord_avatar_failed", {
         user_id: String(user_id),
         url: active_url,
-        status: resp.status,
+        status,
         reason: "http_error",
       });
       return null;
@@ -195,7 +216,8 @@ export function create_discord_avatar_cache({
     }
 
     ensure_dir(fs, AVATAR_DIR);
-    let memfs_path = `${AVATAR_DIR}/${safe_id}.png`;
+    let filename = safe_gid && guild_avatar ? `${safe_id}_g_${safe_gid}.png` : `${safe_id}.png`;
+    let memfs_path = `${AVATAR_DIR}/${filename}`;
     fs.writeFile(memfs_path, png_bytes);
     path_by_key.set(cache_key, memfs_path);
     on_lifecycle("discord_avatar_loaded", {
@@ -209,17 +231,18 @@ export function create_discord_avatar_cache({
   return {
     cdn_base,
 
-    async ensureAvatar({user_id, avatar = null}) {
+    async ensureAvatar({user_id, avatar = null, guild_id = null, guild_avatar = null}) {
       if (!user_id) return null;
       let safe_id = String(user_id).replace(/[^A-Za-z0-9_-]/g, "_");
-      let cache_key = `${safe_id}:${avatar || "default"}`;
+      let safe_gid = guild_id ? String(guild_id).replace(/[^A-Za-z0-9_-]/g, "_") : "";
+      let cache_key = `${safe_id}:${safe_gid}:${guild_avatar || ""}:${avatar || "default"}`;
       if (path_by_key.has(cache_key)) {
         return path_by_key.get(cache_key);
       }
       if (inflight_by_key.has(cache_key)) {
         return inflight_by_key.get(cache_key);
       }
-      let p = fetch_and_store({user_id, avatar})
+      let p = fetch_and_store({user_id, avatar, guild_id, guild_avatar})
         .catch((err) => {
           logger.warn(`Discord avatar load error for ${user_id}:`, err);
           on_lifecycle("discord_avatar_failed", {
@@ -235,10 +258,11 @@ export function create_discord_avatar_cache({
       return p;
     },
 
-    getCachedPath({user_id, avatar = null}) {
+    getCachedPath({user_id, avatar = null, guild_id = null, guild_avatar = null}) {
       if (!user_id) return null;
       let safe_id = String(user_id).replace(/[^A-Za-z0-9_-]/g, "_");
-      return path_by_key.get(`${safe_id}:${avatar || "default"}`) || null;
+      let safe_gid = guild_id ? String(guild_id).replace(/[^A-Za-z0-9_-]/g, "_") : "";
+      return path_by_key.get(`${safe_id}:${safe_gid}:${guild_avatar || ""}:${avatar || "default"}`) || null;
     },
   };
 }

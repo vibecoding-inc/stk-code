@@ -43,7 +43,7 @@ async function make_signed_interaction_request(body_obj, {privateKey}) {
 function create_mock_db() {
   let users = new Map();
   let user_pbs = new Map(); // key: user_id|track|difficulty|laps|reverse
-  let scope_members = new Set(); // key: scope_type|scope_id|user_id
+  let scope_members = new Map(); // key: scope_type|scope_id|user_id -> { guild_nick, guild_avatar }
   let challenges = new Map(); // key: challenge_id
   let pending_launches = new Map(); // key: user_id|channel_id
 
@@ -54,12 +54,13 @@ function create_mock_db() {
   function query_lb(track, difficulty, laps, reverse, scope_type, scope_id, limit) {
     let rows = [];
     for (let pb of user_pbs.values()) {
+      let sm = scope_members.get(`${scope_type}|${scope_id}|${pb.user_id}`);
       if (
         pb.track === track &&
         pb.difficulty === difficulty &&
         pb.laps === laps &&
         pb.reverse === (reverse ? 1 : 0) &&
-        scope_members.has(`${scope_type}|${scope_id}|${pb.user_id}`)
+        sm
       ) {
         let u = users.get(pb.user_id) || {username: "Player", display_name: "Player", avatar: null};
         rows.push({
@@ -67,6 +68,8 @@ function create_mock_db() {
           display_name: u.display_name,
           username: u.username,
           avatar: u.avatar || null,
+          guild_nick: sm.guild_nick || null,
+          guild_avatar: sm.guild_avatar || null,
           run_id: pb.run_id,
           kart: pb.kart,
           kart_color: pb.kart_color,
@@ -102,8 +105,14 @@ function create_mock_db() {
             });
           }
           else if (norm.startsWith("INSERT INTO scope_members")) {
-            let [scope_type, scope_id, user_id] = bound;
-            scope_members.add(`${scope_type}|${scope_id}|${user_id}`);
+            let [scope_type, scope_id, user_id, _joined, guild_nick, guild_avatar] = bound;
+            let key = `${scope_type}|${scope_id}|${user_id}`;
+            if (norm.includes("DO UPDATE") || !scope_members.has(key)) {
+              scope_members.set(key, {
+                guild_nick: guild_nick || null,
+                guild_avatar: guild_avatar || null,
+              });
+            }
           }
           else if (norm.startsWith("INSERT INTO challenges")) {
             let [
@@ -313,14 +322,18 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
     REPLAYS: r2,
   };
 
-  // 1. User runs /timetrial track:abyss in Guild A
+  // 1. User runs /timetrial track:abyss in Guild A (with a guild-specific nickname + guild avatar)
   let cmd_req = await make_signed_interaction_request(
     {
       type: 2,
       guild_id: "guild_A",
       channel_id: "chan_1",
       token: "cmd_tok_1",
-      member: {user: {id: "user_1", username: "alice", global_name: "Alice"}},
+      member: {
+        nick: "SpeedDemon",
+        avatar: "guild_av_1",
+        user: {id: "user_1", username: "alice", global_name: "Alice", avatar: "global_av_1"},
+      },
       data: {
         name: "timetrial",
         options: [{name: "track", value: "abyss"}],
@@ -345,7 +358,11 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
       channel_id: "chan_1",
       token: "btn_tok_1",
       message: {id: "msg_embed_1"},
-      member: {user: {id: "user_1", username: "alice", global_name: "Alice"}},
+      member: {
+        nick: "SpeedDemon",
+        avatar: "guild_av_1",
+        user: {id: "user_1", username: "alice", global_name: "Alice", avatar: "global_av_1"},
+      },
       data: {custom_id: play_custom_id},
     },
     keys
@@ -392,6 +409,10 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
   assert.equal(submit_body.is_new_pb, true);
   assert.equal(submit_body.is_new_first, true);
   assert.equal(submit_body.rank, 1);
+  // Guild leaderboard preserves Guild A's guild-specific nickname & guild avatar even after /api/token
+  assert.equal(submit_body.leaderboard[0].display_name, "SpeedDemon");
+  assert.equal(submit_body.leaderboard[0].guild_avatar, "guild_av_1");
+  assert.equal(submit_body.leaderboard[0].guild_id, "guild_A");
   assert.equal(r2._blobs.size, 1);
 
   // Verify Discord embed PATCH and #1 followup POST both fired via button interaction token

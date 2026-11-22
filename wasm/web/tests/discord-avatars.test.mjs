@@ -22,7 +22,17 @@ function create_mock_fs() {
   };
 }
 
-test("build_discord_avatar_url builds custom and default Discord CDN URLs", () => {
+test("build_discord_avatar_url builds guild, custom, and default Discord CDN URLs", () => {
+  assert.equal(
+    build_discord_avatar_url({
+      user_id: "123456789012345678",
+      avatar: "a_hash",
+      guild_id: "555555",
+      guild_avatar: "g_hash",
+      cdn_base: "/.proxy/discord-cdn",
+    }),
+    "/.proxy/discord-cdn/guilds/555555/users/123456789012345678/avatars/g_hash.png?size=64"
+  );
   assert.equal(
     build_discord_avatar_url({user_id: "123456789012345678", avatar: "a_hash", cdn_base: "/.proxy/discord-cdn"}),
     "/.proxy/discord-cdn/avatars/123456789012345678/a_hash.png?size=64"

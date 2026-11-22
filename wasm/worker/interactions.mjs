@@ -51,11 +51,14 @@ function get_interaction_user(interaction) {
   let u = (interaction.member && interaction.member.user) || interaction.user;
   if (!u || !u.id) return null;
   let nick = interaction.member && interaction.member.nick;
+  let guild_avatar = interaction.member && interaction.member.avatar;
   return {
     user_id: String(u.id),
     username: String(u.username || "Player"),
-    display_name: String(nick || u.global_name || u.username || "Player"),
+    display_name: String(u.global_name || u.username || "Player"),
     avatar: u.avatar ? String(u.avatar) : null,
+    guild_nick: nick ? String(nick) : null,
+    guild_avatar: guild_avatar ? String(guild_avatar) : null,
   };
 }
 
@@ -186,6 +189,9 @@ export async function handleInteractions({request, env}) {
       scope_type: scope.scope_type,
       scope_id: scope.scope_id,
       user_id: user.user_id,
+      guild_nick: user.guild_nick,
+      guild_avatar: user.guild_avatar,
+      update_guild_profile: scope.scope_type === "guild",
     }, now);
 
     let challenge = {
@@ -271,6 +277,9 @@ export async function handleInteractions({request, env}) {
         scope_type: scope.scope_type,
         scope_id: scope.scope_id,
         user_id: user.user_id,
+        guild_nick: user.guild_nick,
+        guild_avatar: user.guild_avatar,
+        update_guild_profile: scope.scope_type === "guild",
       }, now);
 
       // Persist message_id and fresh interaction_token on the challenge so secondary refreshes work.
