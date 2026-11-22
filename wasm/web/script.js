@@ -1,7 +1,11 @@
 import pako from "/vendor/pako.esm.js";
 import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
-import { init_discord_activity } from "/discord-activity.js";
+import {
+  init_discord_activity,
+  can_open_invite_dialog,
+  open_discord_invite_dialog,
+} from "/discord-activity.js";
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
 import { create_scoreboard_sharer, is_discord_share_available } from "/discord-share.js";
 import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
@@ -562,6 +566,18 @@ async function main() {
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
   }
+
+  globalThis.stkDiscordInvite = {
+    isAvailable: () => can_open_invite_dialog(globalThis),
+    open: async () => {
+      let ok = await open_discord_invite_dialog({
+        global_scope: globalThis,
+        logger: console,
+      });
+      log_lifecycle("discord_invite_dialog", {opened: ok});
+      return ok;
+    },
+  };
 
   globalThis.stkLanBridge = create_lan_bridge({
     get_url: () => resolve_ws_url(config.lan_gateway_url || "/api/lan", globalThis.location),

@@ -65,3 +65,30 @@ export async function init_discord_activity({
     logger.warn("Discord Activity login failed.", err);
   }
 }
+
+export function can_open_invite_dialog(global_scope = globalThis) {
+  let sdk = global_scope && global_scope.discordSdk;
+  return Boolean(
+    sdk &&
+    sdk.guildId &&
+    sdk.commands &&
+    typeof sdk.commands.openInviteDialog === "function"
+  );
+}
+
+export async function open_discord_invite_dialog({
+  global_scope = globalThis,
+  logger = console,
+} = {}) {
+  if (!can_open_invite_dialog(global_scope)) {
+    return false;
+  }
+  try {
+    await global_scope.discordSdk.commands.openInviteDialog();
+    return true;
+  }
+  catch (err) {
+    logger.warn("Discord openInviteDialog failed.", err);
+    return false;
+  }
+}

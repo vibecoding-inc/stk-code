@@ -10,7 +10,10 @@
                 </box>
                 <spacer width="3%" height="10"/>
                 <box proportion="1" height="100%" layout="vertical-row">
-                    <list id="players" width="100%" height="100%"/>
+                    <list id="players" width="100%" proportion="1"/>
+                    <spacer height="2%" width="10"/>
+                    <button id="invite" width="96%" height="fit" align="center"
+                        I18N="In the network lobby" text="Invite"/>
                 </box>
             </div>
         </div>

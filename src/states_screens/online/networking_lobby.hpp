@@ -101,6 +101,7 @@ private:
     GUIEngine::TextBoxWidget* m_chat_box;
     GUIEngine::ButtonWidget* m_send_button;
     GUIEngine::ButtonWidget* m_emoji_button;
+    GUIEngine::ButtonWidget* m_invite_button;
 
     irr::gui::STKModifiedSpriteBank* m_icon_bank;
 

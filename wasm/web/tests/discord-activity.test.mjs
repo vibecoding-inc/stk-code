@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { init_discord_activity } from "../discord-activity.js";
+import {
+  init_discord_activity,
+  can_open_invite_dialog,
+  open_discord_invite_dialog,
+} from "../discord-activity.js";
 
 test("init_discord_activity skips startup outside Discord", {concurrency: false}, async () => {
   let created = false;
@@ -250,4 +254,94 @@ test("init_discord_activity continues login if encourageHardwareAcceleration fai
   assert.equal(global_scope.discordHardwareAccelerationEnabled, undefined);
   assert.equal(auth.user.username, "tux");
   assert.deepEqual(warnings, ["Discord encourageHardwareAcceleration failed."]);
+});
+
+test("can_open_invite_dialog requires a Discord guild channel and command", {concurrency: false}, () => {
+  assert.equal(can_open_invite_dialog({}), false);
+  assert.equal(
+    can_open_invite_dialog({
+      discordSdk: {
+        guildId: null,
+        commands: {openInviteDialog: async () => {}},
+      },
+    }),
+    false
+  );
+  assert.equal(
+    can_open_invite_dialog({
+      discordSdk: {
+        guildId: "guild-123",
+        commands: {},
+      },
+    }),
+    false
+  );
+  assert.equal(
+    can_open_invite_dialog({
+      discordSdk: {
+        guildId: "guild-123",
+        commands: {openInviteDialog: async () => {}},
+      },
+    }),
+    true
+  );
+});
+
+test("open_discord_invite_dialog invokes openInviteDialog and handles errors", {concurrency: false}, async () => {
+  let called = false;
+  let ok = await open_discord_invite_dialog({
+    global_scope: {
+      discordSdk: {
+        guildId: "guild-123",
+        commands: {
+          openInviteDialog: async () => {
+            called = true;
+          },
+        },
+      },
+    },
+    logger: {
+      warn() {
+        throw new Error("No warning expected on success.");
+      },
+    },
+  });
+  assert.equal(called, true);
+  assert.equal(ok, true);
+
+  let warnings = [];
+  let failed = await open_discord_invite_dialog({
+    global_scope: {
+      discordSdk: {
+        guildId: "guild-123",
+        commands: {
+          openInviteDialog: async () => {
+            throw new Error("missing invite permission");
+          },
+        },
+      },
+    },
+    logger: {
+      warn(...args) {
+        warnings.push(args[0]);
+      },
+    },
+  });
+  assert.equal(failed, false);
+  assert.deepEqual(warnings, ["Discord openInviteDialog failed."]);
+
+  let skipped = await open_discord_invite_dialog({
+    global_scope: {
+      discordSdk: {
+        guildId: null,
+        commands: {
+          openInviteDialog: async () => {
+            throw new Error("should not be called in DM");
+          },
+        },
+      },
+    },
+    logger: {warn() {}},
+  });
+  assert.equal(skipped, false);
 });

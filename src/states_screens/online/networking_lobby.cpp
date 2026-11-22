@@ -61,8 +61,26 @@
 #include <IGUIEnvironment.h>
 #include <IGUIStaticText.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 using namespace Online;
 using namespace GUIEngine;
+
+// ----------------------------------------------------------------------------
+static bool canOpenDiscordInviteDialog()
+{
+#ifdef __EMSCRIPTEN__
+    return EM_ASM_INT({
+        return (globalThis.stkDiscordInvite &&
+                typeof globalThis.stkDiscordInvite.isAvailable === "function" &&
+                globalThis.stkDiscordInvite.isAvailable()) ? 1 : 0;
+    }) != 0;
+#else
+    return false;
+#endif
+}   // canOpenDiscordInviteDialog
 
 /** This is the lobby screen that is shown on all clients, but not on the
  *  server. It shows currently connected clients, and allows the 'master'
@@ -91,6 +109,8 @@ NetworkingLobby::NetworkingLobby() : Screen("online/networking_lobby.stkgui")
     m_player_list = NULL;
     m_chat_box = NULL;
     m_send_button = NULL;
+    m_emoji_button = NULL;
+    m_invite_button = NULL;
     m_icon_bank = NULL;
     m_reload_server_info = false;
     m_addon_install = NULL;
@@ -129,6 +149,9 @@ void NetworkingLobby::loadedFromFile()
 
     m_emoji_button = getWidget<ButtonWidget>("emoji");
     assert(m_emoji_button != NULL);
+
+    m_invite_button = getWidget<ButtonWidget>("invite");
+    assert(m_invite_button != NULL);
 
     m_icon_bank = new irr::gui::STKModifiedSpriteBank(GUIEngine::getGUIEnv());
     video::ITexture* icon_1 = irr_driver->getTexture
@@ -220,6 +243,10 @@ void NetworkingLobby::init()
     m_emoji_button->setActive(false);
     // Unicode smile emoji
     m_emoji_button->setText(L"\u263A");
+
+    bool can_invite = canOpenDiscordInviteDialog();
+    m_invite_button->setVisible(can_invite);
+    m_invite_button->setActive(can_invite);
 
     // Connect to server now if we have saved players and not disconnected
     if (!LobbyProtocol::get<LobbyProtocol>() &&
@@ -849,6 +876,18 @@ void NetworkingLobby::eventCallback(Widget* widget, const std::string& name,
         EmojiKeyboard* ek = new EmojiKeyboard(1.0f, 0.40f,
             m_chat_box->getIrrlichtElement<CGUIEditBox>());
         ek->init();
+    }
+    else if (name == m_invite_button->m_properties[PROP_ID])
+    {
+#ifdef __EMSCRIPTEN__
+        EM_ASM({
+            if (globalThis.stkDiscordInvite &&
+                typeof globalThis.stkDiscordInvite.open === "function")
+            {
+                globalThis.stkDiscordInvite.open();
+            }
+        });
+#endif
     }
     else if (name == m_start_button->m_properties[PROP_ID])
     {
