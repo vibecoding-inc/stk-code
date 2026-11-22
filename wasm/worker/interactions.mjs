@@ -19,6 +19,7 @@ import {
   upsert_user,
   ensure_scope_member,
   query_scope_leaderboard,
+  compute_podium_hash,
   build_challenge_embed,
   build_challenge_components,
 } from "./time-trials.mjs";
@@ -245,10 +246,23 @@ export async function handleInteractions({request, env}) {
       limit: 10,
     });
 
+    let podium_image_url = null;
+    if (env.REPLAYS && leaderboard.entries && leaderboard.entries.length > 0) {
+      try {
+        let hash = await compute_podium_hash(challenge, leaderboard.entries);
+        if (hash && (await env.REPLAYS.head(`podiums/${hash}.png`))) {
+          podium_image_url = `${new URL(request.url).origin}/api/timetrials/podium/${hash}.png`;
+        }
+      }
+      catch {
+        // Fail-open on cache check
+      }
+    }
+
     return json_response({
       type: RESPONSE_TYPE.CHANNEL_MESSAGE_WITH_SOURCE,
       data: {
-        embeds: [build_challenge_embed(challenge, leaderboard)],
+        embeds: [build_challenge_embed(challenge, leaderboard, {podium_image_url})],
         components: build_challenge_components(challenge_id),
       },
     });

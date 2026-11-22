@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleInteractions } from "../../worker/interactions.mjs";
 import { handleTokenExchange } from "../../worker/token.mjs";
-import { handleTimeTrials } from "../../worker/time-trials.mjs";
+import {
+  handleTimeTrials,
+  compute_podium_hash,
+  ensure_podium_image,
+  build_challenge_embed,
+} from "../../worker/time-trials.mjs";
 import { sign_jwt } from "../../worker/jwt.mjs";
 import { autocomplete_tracks } from "../../worker/tracks.mjs";
 import { register_commands } from "../../scripts/register-commands.mjs";
@@ -506,4 +511,148 @@ test("register_commands preserves Discord PRIMARY_ENTRY_POINT (type 4) command d
   assert.equal(entry.name, "launch");
   assert.equal(entry.handler, 2);
   assert.equal(entry.application_id, undefined);
+});
+
+
+test("compute_podium_hash is deterministic and ignores entries beyond Top 3", async () => {
+  let challenge = {track: "hacienda", difficulty: 3, laps: 3, reverse: 0};
+  let top3 = [
+    {rank: 1, user_id: "1", display_name: "Alice", kart: "tux", time_ms: 80000},
+    {rank: 2, user_id: "2", display_name: "Bob", kart: "nolok", time_ms: 81000},
+    {rank: 3, user_id: "3", display_name: "Cara", kart: "hexley", time_ms: 82000},
+  ];
+  let h1 = await compute_podium_hash(challenge, top3);
+  let h2 = await compute_podium_hash(challenge, [
+    ...top3,
+    {rank: 4, user_id: "4", display_name: "Dan", kart: "gnu", time_ms: 90000},
+  ]);
+  let h3 = await compute_podium_hash(challenge, [
+    {...top3[0], time_ms: 79500},
+    top3[1],
+    top3[2],
+  ]);
+
+  assert.match(h1, /^[a-f0-9]{24}$/);
+  assert.equal(h1, h2);
+  assert.notEqual(h1, h3);
+  assert.equal(await compute_podium_hash(challenge, []), null);
+});
+
+test("ensure_podium_image renders via Workers VPC on cache miss, caches in R2, and serves via GET route", async () => {
+  let store = new Map();
+  let r2 = {
+    async head(key) {
+      return store.has(key) ? {key} : null;
+    },
+    async put(key, value) {
+      store.set(key, new Uint8Array(value));
+    },
+    async get(key) {
+      return store.has(key) ? {body: store.get(key)} : null;
+    },
+  };
+
+  let fake_png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  let vpc_calls = [];
+  let env = {
+    REPLAYS: r2,
+    PODIUM_RENDER_SECRET: "super-secret-token",
+    PODIUM_RENDERER: {
+      async fetch(url, init) {
+        vpc_calls.push({url, init});
+        return new Response(fake_png, {status: 200, headers: {"Content-Type": "image/png"}});
+      },
+    },
+  };
+
+  let challenge = {track: "hacienda", difficulty: 3, laps: 3, reverse: 0};
+  let leaderboard = {
+    entries: [
+      {
+        rank: 1,
+        user_id: "1001",
+        guild_id: "9001",
+        display_name: "SpeedyTux",
+        avatar: "av1",
+        guild_avatar: "gav1",
+        kart: "tux",
+        time_ms: 82415,
+      },
+    ],
+    total_players: 1,
+  };
+
+  let url1 = await ensure_podium_image({
+    env,
+    challenge,
+    leaderboard,
+    public_origin: "https://stk.example.workers.dev",
+  });
+  assert.match(url1, /^https:\/\/stk\.example\.workers\.dev\/api\/timetrials\/podium\/[a-f0-9]{24}\.png$/);
+  assert.equal(vpc_calls.length, 1);
+  assert.equal(vpc_calls[0].init.headers.Authorization, "Bearer super-secret-token");
+
+  // Second call hits R2 cache without calling Workers VPC again
+  let url2 = await ensure_podium_image({
+    env,
+    challenge,
+    leaderboard,
+    public_origin: "https://stk.example.workers.dev",
+  });
+  assert.equal(url2, url1);
+  assert.equal(vpc_calls.length, 1);
+
+  // Embed includes image URL
+  let embed = build_challenge_embed(challenge, leaderboard, {podium_image_url: url1});
+  assert.deepEqual(embed.image, {url: url1});
+
+  // Public GET route streams cached PNG with immutable Cache-Control
+  let get_resp = await handleTimeTrials({
+    request: new Request(url1, {method: "GET"}),
+    env,
+  });
+  assert.equal(get_resp.status, 200);
+  assert.equal(get_resp.headers.get("Content-Type"), "image/png");
+  assert.match(get_resp.headers.get("Cache-Control"), /immutable/);
+  let body_bytes = new Uint8Array(await get_resp.arrayBuffer());
+  assert.deepEqual(body_bytes, fake_png);
+
+  // Missing hash returns 404
+  let miss_resp = await handleTimeTrials({
+    request: new Request("https://stk.example.workers.dev/api/timetrials/podium/000000000000000000000000.png"),
+    env,
+  });
+  assert.equal(miss_resp.status, 404);
+});
+
+test("ensure_podium_image fails open when Workers VPC binding is absent or errors", async () => {
+  let r2 = {async head() { return null; }};
+  let challenge = {track: "hacienda", difficulty: 3, laps: 3, reverse: 0};
+  let leaderboard = {
+    entries: [{rank: 1, user_id: "1", display_name: "Alice", kart: "tux", time_ms: 80000}],
+    total_players: 1,
+  };
+
+  let no_vpc = await ensure_podium_image({
+    env: {REPLAYS: r2},
+    challenge,
+    leaderboard,
+    public_origin: "https://stk.example.workers.dev",
+  });
+  assert.equal(no_vpc, null);
+
+  let err_vpc = await ensure_podium_image({
+    env: {
+      REPLAYS: r2,
+      PODIUM_RENDERER: {
+        async fetch() {
+          throw new Error("tunnel offline");
+        },
+      },
+    },
+    challenge,
+    leaderboard,
+    public_origin: "https://stk.example.workers.dev",
+  });
+  assert.equal(err_vpc, null);
 });

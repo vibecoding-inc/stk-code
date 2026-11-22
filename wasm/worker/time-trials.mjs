@@ -181,9 +181,123 @@ export async function query_scope_leaderboard(
 }
 
 /**
+ * Computes a short deterministic content hash for a challenge's Top-3 podium state.
+ * Returns null if no entries exist yet.
+ */
+export async function compute_podium_hash(challenge, entries) {
+  let top3 = Array.isArray(entries) ? entries.slice(0, 3) : [];
+  if (top3.length === 0) return null;
+
+  let canonical = JSON.stringify({
+    v: 1,
+    track: challenge.track,
+    difficulty: challenge.difficulty,
+    laps: challenge.laps,
+    reverse: Boolean(challenge.reverse),
+    entries: top3.map((e, idx) => ({
+      rank: e.rank || idx + 1,
+      user_id: String(e.user_id || ""),
+      display_name: String(e.display_name || ""),
+      avatar: e.avatar || null,
+      guild_avatar: e.guild_avatar || null,
+      guild_id: e.guild_id || null,
+      kart: String(e.kart || ""),
+      time_ms: Number(e.time_ms) || 0,
+    })),
+  });
+
+  let digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  let bytes = new Uint8Array(digest);
+  let hex = "";
+  for (let i = 0; i < 12; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+/**
+ * Ensures the Top-3 podium PNG exists in R2 (rendering via the Workers VPC
+ * `PODIUM_RENDERER` service on cache miss) and returns its public Worker URL.
+ * Always fail-open: returns null if rendering is unconfigured or fails.
+ */
+export async function ensure_podium_image({env, challenge, leaderboard, public_origin}) {
+  if (!env || !env.REPLAYS || !public_origin) return null;
+  let entries = (leaderboard && leaderboard.entries) || [];
+  if (entries.length === 0) return null;
+
+  let hash = await compute_podium_hash(challenge, entries);
+  if (!hash) return null;
+
+  let r2_key = `podiums/${hash}.png`;
+  let public_url = `${public_origin}/api/timetrials/podium/${hash}.png`;
+
+  try {
+    let existing = await env.REPLAYS.head(r2_key);
+    if (existing) return public_url;
+  }
+  catch {
+    // Proceed to render attempt
+  }
+
+  if (!env.PODIUM_RENDERER || typeof env.PODIUM_RENDERER.fetch !== "function") {
+    return null;
+  }
+
+  let track_info = get_track(challenge.track);
+  let payload = {
+    track: challenge.track,
+    track_name: track_info ? track_info.name : challenge.track,
+    difficulty: get_difficulty_name(challenge.difficulty),
+    laps: challenge.laps,
+    reverse: Boolean(challenge.reverse),
+    entries: entries.slice(0, 3).map((e, idx) => ({
+      rank: e.rank || idx + 1,
+      user_id: e.user_id,
+      guild_id: e.guild_id || null,
+      display_name: e.display_name,
+      avatar: e.avatar || null,
+      guild_avatar: e.guild_avatar || null,
+      kart: e.kart,
+      time_ms: e.time_ms,
+    })),
+  };
+
+  let headers = {"Content-Type": "application/json"};
+  if (env.PODIUM_RENDER_SECRET) {
+    headers.Authorization = `Bearer ${env.PODIUM_RENDER_SECRET}`;
+  }
+
+  try {
+    let resp = await env.PODIUM_RENDERER.fetch("http://podium-renderer:3000/render", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      console.warn(`Podium render returned HTTP ${resp.status} for ${hash}`);
+      return null;
+    }
+    let png_bytes = await resp.arrayBuffer();
+    if (!png_bytes || png_bytes.byteLength === 0) return null;
+
+    await env.REPLAYS.put(r2_key, png_bytes, {
+      httpMetadata: {
+        contentType: "image/png",
+        cacheControl: "public, max-age=31536000, immutable",
+      },
+    });
+    return public_url;
+  }
+  catch (err) {
+    console.warn("Podium render failed (fail-open):", err && err.message ? err.message : err);
+    return null;
+  }
+}
+
+/**
  * Builds the Discord embed for a Time Trial challenge message.
  */
-export function build_challenge_embed(challenge, {entries, total_players}) {
+export function build_challenge_embed(challenge, {entries, total_players}, options = {}) {
   let track_info = get_track(challenge.track);
   let track_name = track_info ? track_info.name : challenge.track;
   let diff_name = get_difficulty_name(challenge.difficulty);
@@ -202,7 +316,7 @@ export function build_challenge_embed(challenge, {entries, total_players}) {
     description = lines.join("\n");
   }
 
-  return {
+  let embed = {
     title: `🏁 Time Trial — ${track_name}`,
     color: 0x3b82f6,
     description,
@@ -216,6 +330,12 @@ export function build_challenge_embed(challenge, {entries, total_players}) {
     },
     timestamp: new Date().toISOString(),
   };
+
+  if (options && options.podium_image_url) {
+    embed.image = {url: options.podium_image_url};
+  }
+
+  return embed;
 }
 
 export function build_challenge_components(challenge_id) {
@@ -295,12 +415,19 @@ async function refresh_challenge_embeds({
   challenge,
   launch_row,
   leaderboard,
+  public_origin,
   now,
   fetch_impl,
 }) {
   let app_id = env.DISCORD_CLIENT_ID;
   let bot_token = env.DISCORD_BOT_TOKEN;
-  let embed = build_challenge_embed(challenge, leaderboard);
+  let podium_image_url = await ensure_podium_image({
+    env,
+    challenge,
+    leaderboard,
+    public_origin,
+  });
+  let embed = build_challenge_embed(challenge, leaderboard, {podium_image_url});
 
   let refreshed_message_ids = new Set();
 
@@ -839,6 +966,7 @@ async function handleSubmitRun({request, env, ctx, fetch_impl = fetch}) {
       .bind(claims.sub, challenge.channel_id)
       .first();
 
+    let public_origin = new URL(request.url).origin;
     let discord_updates = (async () => {
       await refresh_challenge_embeds({
         env,
@@ -846,6 +974,7 @@ async function handleSubmitRun({request, env, ctx, fetch_impl = fetch}) {
         challenge,
         launch_row,
         leaderboard: updated_lb,
+        public_origin,
         now,
         fetch_impl,
       });
@@ -939,9 +1068,34 @@ async function handleGetScopeProfiles({request, env}) {
   });
 }
 
+async function handleGetPodium({env, hash}) {
+  if (!env.REPLAYS) {
+    return new Response("Not Found", {status: 404});
+  }
+  let obj = await env.REPLAYS.get(`podiums/${hash}.png`);
+  if (!obj) {
+    return new Response("Not Found", {status: 404});
+  }
+  return new Response(obj.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
 export async function handleTimeTrials({request, env, ctx, fetch_impl = fetch}) {
   let url = new URL(request.url);
   let path = url.pathname;
+
+  let podium_match = path.match(/^\/api\/timetrials\/podium\/([a-f0-9]{16,64})\.png$/);
+  if (podium_match) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method Not Allowed", {status: 405});
+    }
+    return handleGetPodium({env, hash: podium_match[1]});
+  }
 
   if (path === "/api/timetrials/scope-profiles") {
     if (request.method !== "GET") {
