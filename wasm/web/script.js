@@ -9,6 +9,7 @@ import {
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
 import { create_scoreboard_sharer, is_discord_share_available } from "/discord-share.js";
 import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
+import { create_discord_avatar_cache } from "/discord-avatars.js";
 import { create_time_trials_bridge } from "/time-trials.js";
 import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
@@ -625,6 +626,12 @@ async function main() {
     logger: console,
   });
 
+  globalThis.stkDiscordAvatars = create_discord_avatar_cache({
+    fetch_impl: (...args) => fetch(...args),
+    get_fs: () => (typeof FS !== "undefined" ? FS : null),
+    logger: console,
+  });
+
   globalThis.stkTimeTrials = create_time_trials_bridge({
     fetch_impl: (...args) => fetch(...args),
     get_session_token: () => globalThis.discordSessionToken || null,
@@ -634,6 +641,7 @@ async function main() {
     get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
     gzip_impl: (bytes) => pako.gzip(bytes),
     ungzip_impl: (bytes) => pako.ungzip(bytes),
+    avatar_cache: globalThis.stkDiscordAvatars,
     logger: console,
     on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
   });

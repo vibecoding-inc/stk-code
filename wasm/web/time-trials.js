@@ -75,6 +75,7 @@ export function create_time_trials_bridge({
   get_heap_u8 = () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (typeof Module !== "undefined" ? Module.HEAPU8 : null)),
   gzip_impl,
   ungzip_impl,
+  avatar_cache = null,
   logger = console,
   on_lifecycle = () => {},
 } = {}) {
@@ -117,6 +118,8 @@ export function create_time_trials_bridge({
 
     let fs = get_fs();
     let ghost_files = [];
+    let ghost_names = [];
+    let ghost_avatars = [];
     if (fs) {
       ensure_dir(fs, GHOST_DIR);
       clear_dir(fs, GHOST_DIR);
@@ -124,9 +127,14 @@ export function create_time_trials_bridge({
       let downloaded = await Promise.all(
         ghosts.map(async (g) => {
           try {
-            let r = await fetch_impl(g.url, {
+            let replay_promise = fetch_impl(g.url, {
               headers: {Authorization: `Bearer ${token}`},
             });
+            let avatar_promise = avatar_cache && typeof avatar_cache.ensureAvatar === "function"
+              ? avatar_cache.ensureAvatar({user_id: g.user_id, avatar: g.avatar || null})
+              : Promise.resolve(null);
+
+            let [r, avatar_path] = await Promise.all([replay_promise, avatar_promise]);
             if (!r.ok) {
               logger.warn(`Failed to download ghost ${g.run_id} (${r.status})`);
               on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: `http_${r.status}`});
@@ -147,7 +155,11 @@ export function create_time_trials_bridge({
             }
             let path = `${GHOST_DIR}/${g.run_id}.replay`;
             fs.writeFile(path, bytes);
-            return path;
+            return {
+              path,
+              name: g.display_name || "",
+              avatar: avatar_path || "",
+            };
           }
           catch (err) {
             logger.warn(`Ghost download error for ${g.run_id}:`, err);
@@ -159,7 +171,12 @@ export function create_time_trials_bridge({
           }
         })
       );
-      ghost_files = downloaded.filter(Boolean);
+      for (let item of downloaded) {
+        if (!item) continue;
+        ghost_files.push(item.path);
+        ghost_names.push(item.name);
+        ghost_avatars.push(item.avatar);
+      }
     }
 
     prepared_challenge = {
@@ -167,6 +184,8 @@ export function create_time_trials_bridge({
       total_players: data.total_players || 0,
       leaderboard: data.leaderboard || [],
       ghost_files,
+      ghost_names,
+      ghost_avatars,
     };
 
     on_lifecycle("time_trial_ghosts_loaded", {
