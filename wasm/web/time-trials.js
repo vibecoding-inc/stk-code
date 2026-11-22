@@ -129,15 +129,20 @@ export function create_time_trials_bridge({
             });
             if (!r.ok) {
               logger.warn(`Failed to download ghost ${g.run_id} (${r.status})`);
+              on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: `http_${r.status}`});
               return null;
             }
             let raw_bytes = new Uint8Array(await r.arrayBuffer());
-            if (raw_bytes.length === 0) return null;
+            if (raw_bytes.length === 0) {
+              on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: "empty_body"});
+              return null;
+            }
             let bytes = maybe_ungzip(raw_bytes);
             // Sanity check header ("version:") so corrupt/encoded blobs are logged clearly.
             let header_preview = new TextDecoder().decode(bytes.subarray(0, 16));
             if (!header_preview.startsWith("version:")) {
               logger.warn(`Ghost ${g.run_id} has unexpected header: ${JSON.stringify(header_preview)}`);
+              on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: "bad_header"});
               return null;
             }
             let path = `${GHOST_DIR}/${g.run_id}.replay`;
@@ -146,6 +151,10 @@ export function create_time_trials_bridge({
           }
           catch (err) {
             logger.warn(`Ghost download error for ${g.run_id}:`, err);
+            on_lifecycle("time_trial_ghost_load_failed", {
+              run_id: g.run_id,
+              reason: err && err.message ? err.message : String(err),
+            });
             return null;
           }
         })

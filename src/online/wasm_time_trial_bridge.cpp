@@ -277,12 +277,25 @@ void WasmTimeTrialBridge::startChallengeRace()
     rp->clearReplayFileList();
 
     std::vector<unsigned int> active_indices;
+    unsigned int failed_count = 0;
     for (const std::string& path : m_ghost_files)
     {
         if (rp->addReplayFile(path, /*custom_replay*/ true))
         {
             active_indices.push_back(rp->getNumReplayFile() - 1);
         }
+        else
+        {
+            failed_count++;
+            Log::warn("WasmTimeTrialBridge",
+                      "Failed to load ghost replay file '%s'.", path.c_str());
+        }
+    }
+    if (failed_count > 0)
+    {
+        Log::warn("WasmTimeTrialBridge",
+                  "Ghost load summary: %u loaded, %u failed.",
+                  (unsigned)active_indices.size(), failed_count);
     }
     rp->setActiveReplayFiles(active_indices);
 
@@ -299,6 +312,16 @@ void WasmTimeTrialBridge::startChallengeRace()
         PlayerManager::getCurrentPlayer()->setCurrentChallenge("");
 
     RaceManager::get()->startSingleRace(m_track, m_laps, false);
+
+    if (active_indices.size() == 1)
+    {
+        MessageQueue::add(MessageQueue::MT_GENERIC, _("Racing against 1 ghost"));
+    }
+    else if (active_indices.size() > 1)
+    {
+        MessageQueue::add(MessageQueue::MT_GENERIC,
+                          _("Racing against %u ghosts", (unsigned)active_indices.size()));
+    }
 #endif
 }   // startChallengeRace
 
