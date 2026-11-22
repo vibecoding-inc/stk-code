@@ -4,6 +4,9 @@ import satori from "satori";
 import { Resvg } from "@resvg/resvg-js";
 import sharp from "sharp";
 import { fetchAvatarDataUri } from "./avatars.mjs";
+import { createLogger } from "./logger.mjs";
+
+const log = createLogger("podium_renderer::compositor");
 
 const RANK_THEMES = {
   1: {
@@ -599,7 +602,11 @@ export class PodiumCompositor {
     if (fs.existsSync(exact)) return exact;
     // Fallback to tux if an unknown/addon kart was used
     const fallback = path.join(this.assetsDir, "karts", `tux_${rank}.png`);
-    if (fs.existsSync(fallback)) return fallback;
+    if (fs.existsSync(fallback)) {
+      log.debug("kart sprite not found, falling back to tux", { kart: safe, rank });
+      return fallback;
+    }
+    log.debug("no kart sprite available", { kart: safe, rank });
     return null;
   }
 

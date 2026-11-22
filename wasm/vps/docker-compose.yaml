@@ -17,6 +17,7 @@ services:
     environment:
       PORT: "3000"
       MAX_CONCURRENCY: "2"
+      LOG_LEVEL: "info"
     # Internal-only service: reached exclusively from Cloudflare Workers via
     # Workers VPC through the `cloudflared` tunnel below (no public host ports).
     expose:

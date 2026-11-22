@@ -5,6 +5,10 @@
  * https://cdn.discordapp.com/... URLs from strict Discord snowflake/hash fields.
  */
 
+import { createLogger } from "./logger.mjs";
+
+const log = createLogger("podium_renderer::avatars");
+
 const SNOWFLAKE_RE = /^\d{1,25}$/;
 const HASH_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 
@@ -68,17 +72,28 @@ export async function fetchAvatarDataUri(entry, { fetchImpl = fetch, timeoutMs =
         signal: controller.signal,
         headers: { "User-Agent": "stk-podium-renderer/1.0" },
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) {
+        log.debug("avatar fetch non-200, trying fallback", {
+          user_id: entry.user_id,
+          status: resp.status,
+          url,
+        });
+        continue;
+      }
       const contentType = (resp.headers.get("content-type") || "image/png").split(";")[0].trim();
       if (!contentType.startsWith("image/")) continue;
       const buf = Buffer.from(await resp.arrayBuffer());
       if (buf.length === 0 || buf.length > 2 * 1024 * 1024) continue;
       return `data:${contentType};base64,${buf.toString("base64")}`;
-    } catch {
-      // Try next fallback URL
+    } catch (err) {
+      log.warn("avatar fetch failed, trying fallback", {
+        user_id: entry.user_id,
+        error: err && err.message ? err.message : String(err),
+      });
     } finally {
       clearTimeout(timer);
     }
   }
+  log.debug("using monogram fallback avatar", { user_id: entry.user_id });
   return makeFallbackAvatarDataUri(entry.display_name, entry.user_id);
 }

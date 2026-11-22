@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PodiumCompositor } from "./compositor.mjs";
+import { createLogger } from "./logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -23,6 +25,9 @@ const FONT_DIRS = (
     "/usr/share/fonts/truetype/dejavu",
   ].join(":")
 ).split(":");
+
+const serverLog = createLogger("podium_renderer::server");
+const httpLog = createLogger("podium_renderer::http");
 
 function checkAuth(req) {
   if (!RENDER_SECRET) return true;
@@ -64,12 +69,15 @@ function createSemaphore(max) {
   const queue = [];
   return {
     async run(fn) {
+      const queuedAt = Date.now();
       if (active >= max) {
         await new Promise((resolve) => queue.push(resolve));
       }
+      const queueMs = Date.now() - queuedAt;
       active++;
       try {
-        return await fn();
+        const result = await fn();
+        return { result, queueMs };
       } finally {
         active--;
         if (queue.length > 0) queue.shift()();
@@ -78,13 +86,25 @@ function createSemaphore(max) {
   };
 }
 
+function countTrackImages(dir) {
+  if (!dir || !fs.existsSync(dir)) return 0;
+  return fs
+    .readdirSync(dir)
+    .filter((f) => /\.(jpe?g|png|webp)$/i.test(f)).length;
+}
+
 export function createPodiumServer(compositor) {
   const sem = createSemaphore(MAX_CONCURRENCY);
+  let nextReqId = 1;
 
   return http.createServer(async (req, res) => {
+    const reqId = nextReqId++;
+    const started = Date.now();
+    const method = req.method || "GET";
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const remote = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : "unknown";
 
-    if (req.method === "GET" && url.pathname === "/healthz") {
+    if (method === "GET" && url.pathname === "/healthz") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
@@ -92,11 +112,28 @@ export function createPodiumServer(compositor) {
           karts: (compositor.layout.karts || []).length,
         })
       );
+      httpLog.debug("handled health check", {
+        req_id: reqId,
+        method,
+        path: url.pathname,
+        status: 200,
+        remote,
+        duration_ms: Date.now() - started,
+      });
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/render") {
+    if (method === "POST" && url.pathname === "/render") {
       if (!checkAuth(req)) {
+        httpLog.warn("rejected request", {
+          req_id: reqId,
+          method,
+          path: url.pathname,
+          status: 401,
+          reason: "unauthorized",
+          remote,
+          duration_ms: Date.now() - started,
+        });
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Unauthorized" }));
         return;
@@ -106,51 +143,107 @@ export function createPodiumServer(compositor) {
       try {
         body = await readJsonBody(req);
       } catch (err) {
-        res.writeHead(err.statusCode || 400, { "Content-Type": "application/json" });
+        const status = err.statusCode || 400;
+        httpLog.warn("rejected request", {
+          req_id: reqId,
+          method,
+          path: url.pathname,
+          status,
+          reason: err.message,
+          remote,
+          duration_ms: Date.now() - started,
+        });
+        res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: err.message }));
         return;
       }
 
       if (!body || typeof body !== "object" || !Array.isArray(body.entries)) {
+        httpLog.warn("rejected request", {
+          req_id: reqId,
+          method,
+          path: url.pathname,
+          status: 400,
+          reason: "missing entries array",
+          remote,
+          duration_ms: Date.now() - started,
+        });
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Body must contain an entries array" }));
         return;
       }
 
-      const started = Date.now();
+      const top3 = body.entries.slice(0, 3);
       try {
-        const png = await sem.run(() =>
+        const renderStart = Date.now();
+        const { result: png, queueMs } = await sem.run(() =>
           compositor.render({
             track: body.track,
             track_name: body.track_name,
             difficulty: body.difficulty,
             laps: body.laps,
             reverse: Boolean(body.reverse),
-            entries: body.entries.slice(0, 3),
+            entries: top3,
           })
         );
-        const elapsed = Date.now() - started;
+        const renderMs = Date.now() - renderStart - queueMs;
+        const durationMs = Date.now() - started;
+
         res.writeHead(200, {
           "Content-Type": "image/png",
           "Content-Length": String(png.length),
           "Cache-Control": "no-store",
-          "X-Render-Time-Ms": String(elapsed),
+          "X-Render-Time-Ms": String(durationMs),
         });
         res.end(png);
+
+        httpLog.info("rendered podium", {
+          req_id: reqId,
+          method,
+          path: url.pathname,
+          status: 200,
+          track: body.track || "unknown",
+          players: top3.length,
+          karts: top3.map((e) => e.kart || "?").join(","),
+          bytes: png.length,
+          queue_ms: queueMs,
+          render_ms: Math.max(0, renderMs),
+          duration_ms: durationMs,
+        });
       } catch (err) {
-        console.error("Podium render failed:", err);
+        httpLog.error("podium render failed", {
+          req_id: reqId,
+          method,
+          path: url.pathname,
+          status: 500,
+          track: body.track || "unknown",
+          players: top3.length,
+          error: err,
+          duration_ms: Date.now() - started,
+        });
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Render failed" }));
       }
       return;
     }
 
+    httpLog.warn("route not found", {
+      req_id: reqId,
+      method,
+      path: url.pathname,
+      status: 404,
+      remote,
+      duration_ms: Date.now() - started,
+    });
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (!RENDER_SECRET) {
+    serverLog.warn("PODIUM_RENDER_SECRET is not set — Bearer auth is DISABLED");
+  }
   const compositor = new PodiumCompositor({
     assetsDir: ASSETS_DIR,
     tracksDir: TRACKS_DIR,
@@ -158,8 +251,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
   const server = createPodiumServer(compositor);
   server.listen(PORT, HOST, () => {
-    console.log(
-      `[podium-renderer] listening on http://${HOST}:${PORT} (assets=${ASSETS_DIR}, karts=${(compositor.layout.karts || []).length}, max_concurrency=${MAX_CONCURRENCY})`
-    );
+    serverLog.info("podium-renderer listening", {
+      addr: `${HOST}:${PORT}`,
+      assets: ASSETS_DIR,
+      karts: (compositor.layout.karts || []).length,
+      tracks: countTrackImages(TRACKS_DIR),
+      fonts: compositor.fonts.length,
+      max_concurrency: MAX_CONCURRENCY,
+      auth_enabled: Boolean(RENDER_SECRET),
+    });
   });
+
+  const shutdown = (signal) => {
+    serverLog.info("shutting down podium-renderer", { signal });
+    server.close(() => {
+      serverLog.info("podium-renderer stopped cleanly");
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
