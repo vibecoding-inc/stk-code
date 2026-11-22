@@ -16,7 +16,9 @@ mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 
 source "$EMSDK_DIR/emsdk_env.sh"
-embuilder build sdl2 sdl2_ttf sdl2_image sdl2_image_jpg sdl2_image_png
+# STK only uses Emscripten's sdl2 port; freetype, harfbuzz, libjpeg, and libpng
+# are cross-compiled separately in wasm/build_deps.sh into wasm/prefix.
+embuilder build sdl2
 
 # Route the compilers through ccache when it is available so unchanged
 # translation units are not recompiled. A full STK compile is the dominant cost

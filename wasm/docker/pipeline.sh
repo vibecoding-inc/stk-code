@@ -38,13 +38,17 @@ mkdir -p "$HOME"
 # Relocate the compiler caches into the (mounted, cacheable) repository so that
 # both local and CI builds reuse them across runs. These directories are what
 # make repeated builds fast:
-#   - CCACHE_DIR  object-file cache for SuperTuxKart's C/C++ sources.
-#   - EM_CACHE    Emscripten's compiled system libraries and ports (SDL2, ...),
-#                 which are otherwise rebuilt from scratch on every fresh run.
+#   - CCACHE_DIR   object-file cache for SuperTuxKart's C/C++ sources.
+#   - EM_PORTS_CACHE  caches the compiled Emscripten sdl2 port (libSDL2.a +
+#                     headers). Note: emsdk_env.sh explicitly unsets EM_CACHE,
+#                     and pointing EM_CACHE at an empty dir would also discard
+#                     the prebuilt sysroot in $EMSDK/upstream/emscripten/cache,
+#                     so we sync only the sdl2 port artifacts into/out of the
+#                     default Emscripten cache.
 export CCACHE_DIR="${CCACHE_DIR:-$WASM_DIR/.ccache}"
 export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-2G}"
-export EM_CACHE="${EM_CACHE:-$WASM_DIR/.emcache}"
-mkdir -p "$CCACHE_DIR" "$EM_CACHE"
+EM_PORTS_CACHE="${EM_CACHE:-$WASM_DIR/.emcache}"
+mkdir -p "$CCACHE_DIR" "$EM_PORTS_CACHE"
 
 # Expose the preinstalled SDK where the existing build scripts and CMakeLists.txt
 # expect it (wasm/emsdk). This keeps the toolchain scripts identical between the
@@ -64,8 +68,29 @@ if [ -n "${SKIP_BUILD_IF_PRESENT:-}" ] \
     && [ -f "$GAME_DIR/supertuxkart.wasm" ]; then
     echo "Compiled wasm artifacts already present; skipping deps and wasm build."
 else
+    EM_SYSROOT_CACHE="${EMSDK:-$WASM_DIR/emsdk}/upstream/emscripten/cache/sysroot"
+    if [ ! -f "$EM_SYSROOT_CACHE/lib/wasm32-emscripten/libSDL2.a" ] \
+        && [ -f "$EM_PORTS_CACHE/sysroot/lib/wasm32-emscripten/libSDL2.a" ] \
+        && [ -d "$EM_PORTS_CACHE/sysroot/include/SDL2" ]; then
+        mkdir -p "$EM_SYSROOT_CACHE/lib/wasm32-emscripten" "$EM_SYSROOT_CACHE/include"
+        cp -a "$EM_PORTS_CACHE/sysroot/lib/wasm32-emscripten/libSDL2.a" \
+            "$EM_SYSROOT_CACHE/lib/wasm32-emscripten/libSDL2.a"
+        cp -a "$EM_PORTS_CACHE/sysroot/include/SDL2" \
+            "$EM_SYSROOT_CACHE/include/"
+    fi
+
     "$WASM_DIR/build_deps.sh"
     "$WASM_DIR/build.sh" "$BUILD_TYPE"
+
+    if [ ! -f "$EM_PORTS_CACHE/sysroot/lib/wasm32-emscripten/libSDL2.a" ] \
+        && [ -f "$EM_SYSROOT_CACHE/lib/wasm32-emscripten/libSDL2.a" ] \
+        && [ -d "$EM_SYSROOT_CACHE/include/SDL2" ]; then
+        mkdir -p "$EM_PORTS_CACHE/sysroot/lib/wasm32-emscripten" "$EM_PORTS_CACHE/sysroot/include"
+        cp -a "$EM_SYSROOT_CACHE/lib/wasm32-emscripten/libSDL2.a" \
+            "$EM_PORTS_CACHE/sysroot/lib/wasm32-emscripten/libSDL2.a"
+        cp -a "$EM_SYSROOT_CACHE/include/SDL2" \
+            "$EM_PORTS_CACHE/sysroot/include/"
+    fi
 fi
 
 # 3. Provide a runtime config if none exists (config.json is gitignored).
