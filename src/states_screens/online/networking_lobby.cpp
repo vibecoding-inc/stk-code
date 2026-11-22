@@ -25,6 +25,7 @@
 #include "config/user_config.hpp"
 #include "config/player_manager.hpp"
 #include "font/font_manager.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "graphics/irr_driver.hpp"
 #include "guiengine/CGUISpriteBank.hpp"
 #include "guiengine/emoji_keyboard.hpp"
@@ -112,6 +113,7 @@ NetworkingLobby::NetworkingLobby() : Screen("online/networking_lobby.stkgui")
     m_emoji_button = NULL;
     m_invite_button = NULL;
     m_icon_bank = NULL;
+    m_last_avatar_version = 0;
     m_reload_server_info = false;
     m_addon_install = NULL;
 
@@ -497,6 +499,13 @@ void NetworkingLobby::onUpdate(float delta)
     m_addon_install = NULL;
     if (NetworkConfig::get()->isServer() || !STKHost::existHost())
         return;
+
+    uint64_t avatar_ver = DiscordAvatarManager::get()->getVersion();
+    if (avatar_ver != m_last_avatar_version)
+    {
+        m_last_avatar_version = avatar_ver;
+        updatePlayers();
+    }
 
     if (m_header->getText() != m_header_text)
     {
@@ -939,6 +948,7 @@ void NetworkingLobby::unloaded()
 {
     delete m_icon_bank;
     m_icon_bank = NULL;
+    m_avatar_sprite_ids.clear();
 }   // unloaded
 
 // ----------------------------------------------------------------------------
@@ -1020,6 +1030,34 @@ void NetworkingLobby::updatePlayers()
             StringUtils::toString(player.m_online_id) + "_" +
             StringUtils::toString(player.m_local_player_id);
         core::stringw player_name = player.m_user_name;
+        core::stringw discord_display =
+            DiscordAvatarManager::get()->getDisplayNameForUsername(player.m_user_name);
+        if (!discord_display.empty())
+        {
+            player_name = discord_display;
+        }
+        int icon_id = player.m_icon_id;
+        video::ITexture* discord_avatar =
+            DiscordAvatarManager::get()->getAvatarTextureForUsername(player.m_user_name);
+        if (discord_avatar && m_icon_bank)
+        {
+            auto it = m_avatar_sprite_ids.find(discord_avatar);
+            if (it == m_avatar_sprite_ids.end())
+            {
+                int new_idx = m_icon_bank->addTextureAsSprite(discord_avatar);
+                m_avatar_sprite_ids[discord_avatar] = new_idx;
+                icon_id = new_idx;
+            }
+            else
+            {
+                icon_id = it->second;
+            }
+            // Keep host indication visible when the crown icon is replaced by the avatar
+            if (player.m_icon_id == 0)
+            {
+                player_name += L" [Host]";
+            }
+        }
         const core::stringw& flag = StringUtils::getCountryFlag(
             player.m_country_code);
         if (!flag.empty())
@@ -1027,8 +1065,7 @@ void NetworkingLobby::updatePlayers()
             player_name += L" ";
             player_name += flag;
         }
-        m_player_list->addItem(internal_name, player_name,
-            player.m_icon_id);
+        m_player_list->addItem(internal_name, player_name, icon_id);
         // Don't show chosen team color for spectator
         if (player.isSpectator())
             m_player_list->markItemRed(i, false/*red*/);

@@ -104,6 +104,8 @@ private:
     GUIEngine::ButtonWidget* m_invite_button;
 
     irr::gui::STKModifiedSpriteBank* m_icon_bank;
+    std::map<irr::video::ITexture*, int> m_avatar_sprite_ids;
+    uint64_t m_last_avatar_version;
 
     /** \brief implement optional callback from parent class GUIEngine::Screen */
     virtual void unloaded() OVERRIDE;

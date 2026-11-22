@@ -274,6 +274,7 @@ extern "C" {
 #include "race/race_manager.hpp"
 #include "replay/replay_play.hpp"
 #include "replay/replay_recorder.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "online/wasm_time_trial_bridge.hpp"
 #include "states_screens/main_menu_screen.hpp"
 #include "states_screens/offline_kart_selection.hpp"
@@ -2532,6 +2533,7 @@ int main(int argc, char *argv[])
 #endif
 
         WasmTimeTrialBridge::get()->initFromJS();
+        DiscordAvatarManager::get()->syncParticipantsFromJS();
 
         if (STKHost::existHost())
         {

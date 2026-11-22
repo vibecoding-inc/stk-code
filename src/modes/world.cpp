@@ -27,6 +27,7 @@
 #include "graphics/camera/camera.hpp"
 #include "graphics/camera/camera_normal.hpp"
 #include "graphics/central_settings.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/material.hpp"
 #include "graphics/material_manager.hpp"
@@ -230,6 +231,10 @@ void World::init()
         ReplayPlay::get()->load();
         for (unsigned int k = 0; k < gk; k++)
             m_karts.push_back(ReplayPlay::get()->getGhostKart(k));
+    }
+    else
+    {
+        DiscordAvatarManager::get()->clearKartBindings();
     }
     main_loop->renderGUI(6999);
 
@@ -548,8 +553,17 @@ std::shared_ptr<AbstractKart> World::createKart
         break;
     }
 
-    if (!controller->isLocalPlayerController() && !online_name.empty())
-        new_kart->setOnScreenText(online_name.c_str());
+    if (!online_name.empty())
+    {
+        core::stringw display =
+            DiscordAvatarManager::get()->getDisplayNameForUsername(online_name);
+        if (!controller->isLocalPlayerController())
+        {
+            new_kart->setOnScreenText(display.empty() ? online_name.c_str() : display.c_str());
+        }
+        DiscordAvatarManager::get()->bindKartByUsername(
+            new_kart.get(), online_name, !controller->isLocalPlayerController());
+    }
     new_kart->setController(controller);
     RaceManager::get()->setKartColor(index, ri->getHue());
     return new_kart;
