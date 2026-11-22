@@ -38,20 +38,20 @@
   // Uncomment after running `npx wrangler d1 create stk-time-trials` and
   // `npx wrangler r2 bucket create stk-time-trial-replays`, then replace
   // <YOUR_D1_DATABASE_ID> with the UUID printed by Wrangler.
-  // "d1_databases": [
-  //   {
-  //     "binding": "TIME_TRIALS_DB",
-  //     "database_name": "stk-time-trials",
-  //     "database_id": "<YOUR_D1_DATABASE_ID>",
-  //     "migrations_dir": "migrations"
-  //   }
-  // ],
-  // "r2_buckets": [
-  //   {
-  //     "binding": "REPLAYS",
-  //     "bucket_name": "stk-time-trial-replays"
-  //   }
-  // ],
+  "d1_databases": [
+    {
+      "binding": "TIME_TRIALS_DB",
+      "database_name": "stk-time-trials",
+      "database_id": "6dc3ef10-174a-484e-9ab3-0f3743e84dd3",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "REPLAYS",
+      "bucket_name": "stk-time-trial-replays"
+    }
+  ],
 
   // Workers observability: keep invocation logs and traces persisted so runs
   // can be inspected in the Cloudflare dashboard. Enabling this also persists
