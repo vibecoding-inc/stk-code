@@ -30,6 +30,7 @@ using namespace irr;
 #include "font/font_drawer.hpp"
 #include "graphics/camera/camera.hpp"
 #include "graphics/central_settings.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "graphics/2dutils.hpp"
 #ifndef SERVER_ONLY
 #include "graphics/glwrap.hpp"
@@ -676,7 +677,9 @@ void RaceGUI::drawGlobalMiniMap()
         track->mapPoint2MiniMap(xyz, &draw_at);
 
         video::ITexture* icon = sta ? m_heart_icon :
-            kart->getKartProperties()->getMinimapIcon();
+            DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
+        if (!sta && icon == NULL)
+            icon = kart->getKartProperties()->getMinimapIcon();
         if (icon == NULL)
         {
             continue;

@@ -28,6 +28,7 @@
 #include "config/stk_config.hpp"
 #include "config/user_config.hpp"
 #include "graphics/2dutils.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/material.hpp"
 #include "guiengine/engine.hpp"
@@ -1058,7 +1059,9 @@ void RaceResultGUI::determineTableLayout()
             }
         }
         video::ITexture *icon =
-            kart->getKartProperties()->getIconMaterial()->getTexture();
+            DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
+        if (!icon)
+            icon = kart->getKartProperties()->getIconMaterial()->getTexture();
         ri->m_kart_icon = icon;
         ri->m_kart_color = RaceManager::get()->getKartColor(kart->getWorldKartId());
 
@@ -1506,8 +1509,9 @@ void RaceResultGUI::determineGPLayout()
         old_rank[kart_id] = rank;
         const AbstractKart *kart = World::getWorld()->getKart(kart_id);
         RowInfo *ri = &(m_all_row_infos[rank]);
-        ri->m_kart_icon =
-            kart->getKartProperties()->getIconMaterial()->getTexture();
+        ri->m_kart_icon = DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
+        if (!ri->m_kart_icon)
+            ri->m_kart_icon = kart->getKartProperties()->getIconMaterial()->getTexture();
         ri->m_is_player_kart = kart->getController()->isLocalPlayerController();
         ri->m_kart_name = kart->getController()->getName();
         if (RaceManager::get()->getKartGlobalPlayerId(kart->getWorldKartId()) > -1)

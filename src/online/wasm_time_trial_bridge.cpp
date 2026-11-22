@@ -19,6 +19,7 @@
 #include "online/wasm_time_trial_bridge.hpp"
 
 #include "config/player_manager.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "guiengine/message_queue.hpp"
 #include "race/race_manager.hpp"
 #include "replay/replay_play.hpp"
@@ -222,7 +223,11 @@ void WasmTimeTrialBridge::parsePreparedJson(const std::string& json)
     extractJsonBool(json, "reverse", rev);
 
     std::vector<std::string> ghosts;
+    std::vector<std::string> ghost_names;
+    std::vector<std::string> ghost_avatars;
     extractJsonStringArray(json, "ghost_files", ghosts);
+    extractJsonStringArray(json, "ghost_names", ghost_names);
+    extractJsonStringArray(json, "ghost_avatars", ghost_avatars);
 
     m_challenge_id = cid;
     m_track = track;
@@ -230,6 +235,8 @@ void WasmTimeTrialBridge::parsePreparedJson(const std::string& json)
     m_laps = std::max(1, std::min(20, laps));
     m_reverse = rev;
     m_ghost_files = std::move(ghosts);
+    m_ghost_names = std::move(ghost_names);
+    m_ghost_avatars = std::move(ghost_avatars);
     m_challenge_mode = true;
 
     Log::info("WasmTimeTrialBridge",
@@ -275,14 +282,22 @@ void WasmTimeTrialBridge::startChallengeRace()
 
     ReplayPlay* rp = ReplayPlay::get();
     rp->clearReplayFileList();
+    DiscordAvatarManager::get()->clearAll();
 
     std::vector<unsigned int> active_indices;
     unsigned int failed_count = 0;
-    for (const std::string& path : m_ghost_files)
+    for (size_t i = 0; i < m_ghost_files.size(); i++)
     {
+        const std::string& path = m_ghost_files[i];
         if (rp->addReplayFile(path, /*custom_replay*/ true))
         {
             active_indices.push_back(rp->getNumReplayFile() - 1);
+            std::string name = i < m_ghost_names.size() ? m_ghost_names[i] : "";
+            std::string avatar = i < m_ghost_avatars.size() ? m_ghost_avatars[i] : "";
+            if (!name.empty() || !avatar.empty())
+            {
+                DiscordAvatarManager::get()->registerReplayMeta(path, name, avatar);
+            }
         }
         else
         {
@@ -440,6 +455,10 @@ void WasmTimeTrialBridge::onGhostsReady(uint32_t req_id, int http_status,
         if (extractJsonStringArray(json, "ghost_files", ghosts))
         {
             m_ghost_files = std::move(ghosts);
+            m_ghost_names.clear();
+            m_ghost_avatars.clear();
+            extractJsonStringArray(json, "ghost_names", m_ghost_names);
+            extractJsonStringArray(json, "ghost_avatars", m_ghost_avatars);
         }
     }
 

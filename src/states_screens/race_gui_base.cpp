@@ -25,6 +25,7 @@
 #include "graphics/2dutils.hpp"
 #include "graphics/camera/camera.hpp"
 #include "graphics/central_settings.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/material.hpp"
 #include "graphics/material_manager.hpp"
@@ -993,16 +994,20 @@ void RaceGUIBase::drawGlobalPlayerIcons(int bottom_margin)
             }
         }
 
-        if (info.special_title.size() > 0)
+        core::stringw title_to_draw = info.special_title;
+        if (title_to_draw.empty())
         {
-            core::dimension2du dim = font->getDimension(info.special_title.c_str());
+            title_to_draw = DiscordAvatarManager::get()->getDisplayNameForKart(kart);
+        }
+        if (title_to_draw.size() > 0)
+        {
+            core::dimension2du dim = font->getDimension(title_to_draw.c_str());
 
             core::rect<s32> pos(x + ICON_PLAYER_WIDTH, y + 5,
                 x + ICON_PLAYER_WIDTH + dim.Width, y + 5 + dim.Height);
-            core::stringw s(info.special_title.c_str());
             font->setBlackBorder(true);
             font->setThinBorder(true);
-            font->draw(s.c_str(), pos, info.m_color, false, false, NULL,
+            font->draw(title_to_draw.c_str(), pos, info.m_color, false, false, NULL,
                        true /* ignore RTL */);
             font->setThinBorder(false);
             font->setBlackBorder(false);
@@ -1034,7 +1039,9 @@ void RaceGUIBase::drawPlayerIcon(AbstractKart *kart, int x, int y, int w,
                                  bool is_local)
 {
 #ifndef SERVER_ONLY
-    video::ITexture *icon = kart->getKartProperties()->getIconMaterial()->getTexture();
+    video::ITexture *icon = DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
+    if (!icon)
+        icon = kart->getKartProperties()->getIconMaterial()->getTexture();
 
     CaptureTheFlag* ctf = dynamic_cast<CaptureTheFlag*>(World::getWorld());
     unsigned int kart_id = kart->getWorldKartId();

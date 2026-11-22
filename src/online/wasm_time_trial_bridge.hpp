@@ -44,6 +44,8 @@ private:
     int                      m_laps;
     bool                     m_reverse;
     std::vector<std::string> m_ghost_files;
+    std::vector<std::string> m_ghost_names;
+    std::vector<std::string> m_ghost_avatars;
 
     uint32_t                 m_next_req_id;
     uint32_t                 m_pending_refresh_req_id;

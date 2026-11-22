@@ -19,6 +19,7 @@
 #include "replay/replay_play.hpp"
 
 #include "config/stk_config.hpp"
+#include "graphics/discord_avatar_manager.hpp"
 #include "io/file_manager.hpp"
 #include "karts/ghost_kart.hpp"
 #include "karts/controller/ghost_controller.hpp"
@@ -325,6 +326,7 @@ bool ReplayPlay::addReplayFile(const std::string& fn, bool custom_replay, int ca
 void ReplayPlay::load()
 {
     m_ghost_karts.clear();
+    DiscordAvatarManager::get()->clearKartBindings();
 
     if (!m_active_replay_files.empty())
     {
@@ -410,9 +412,14 @@ void ReplayPlay::readKartData(FILE *fd, char *next_line, unsigned int replay_ind
         (rd.m_kart_list.at(kart_index_in_file), kart_num, kart_num + 1,
         rd.m_kart_color.at(kart_index_in_file), rd));
     m_ghost_karts[kart_num]->init(RaceManager::KT_GHOST);
+    core::stringw ghost_name = DiscordAvatarManager::get()->getReplayDisplayName(rd.m_filename);
+    if (ghost_name.empty())
+        ghost_name = rd.m_name_list[kart_index_in_file];
     Controller* controller = new GhostController(getGhostKart(kart_num).get(),
-                                                 rd.m_name_list[kart_index_in_file]);
+                                                 ghost_name);
     getGhostKart(kart_num)->setController(controller);
+    DiscordAvatarManager::get()->attachGhostBillboards(
+        m_ghost_karts[kart_num].get(), rd.m_filename);
 
     unsigned int size;
     if(sscanf(next_line,"size: %u",&size)!=1)
