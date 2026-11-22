@@ -720,7 +720,7 @@ async function main() {
   start_button.disabled = false;
   set_loading_state({
     text: pending_tt
-      ? `Time Trial ready: ${pending_tt.track_name || pending_tt.track} (${pending_tt.laps} laps)`
+      ? `Time Trial ready: ${pending_tt.track_name || pending_tt.track} (${pending_tt.laps} ${pending_tt.laps === 1 ? "lap" : "laps"})`
       : can_auto_join_lobby
         ? "Ready to race! Join your Discord Activity lobby or open the main menu."
         : "Ready to race! Choose texture quality and press Start Game.",

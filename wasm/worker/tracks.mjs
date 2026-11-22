@@ -69,7 +69,7 @@ export function format_kart_name(kart_id) {
     .join(" ");
 }
 
-export const DEFAULT_LAPS = 3;
+export const DEFAULT_LAPS = 1;
 export const MIN_LAPS = 1;
 export const MAX_LAPS = 20;
 export const DEFAULT_DIFFICULTY = 2; // Expert
