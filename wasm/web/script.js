@@ -633,6 +633,7 @@ async function main() {
     fetch_impl: (...args) => fetch(...args),
     get_fs: () => (typeof FS !== "undefined" ? FS : null),
     logger: console,
+    on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
   });
 
   globalThis.stkDiscordParticipants = create_participant_avatar_sync({
@@ -642,10 +643,13 @@ async function main() {
     get_module: () => Module,
     get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
     logger: console,
+    on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
   });
   // Kick off background sync of connected Discord Activity participants so
   // multiplayer lobby & in-race avatars are ready as soon as STK boots.
-  globalThis.stkDiscordParticipants.start().catch(() => {});
+  globalThis.stkDiscordParticipants.start().catch((err) => {
+    console.warn("Discord participant avatar sync failed:", err);
+  });
 
   globalThis.stkTimeTrials = create_time_trials_bridge({
     fetch_impl: (...args) => fetch(...args),

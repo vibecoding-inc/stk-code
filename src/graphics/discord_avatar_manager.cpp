@@ -20,6 +20,7 @@
 
 #include "karts/abstract_kart.hpp"
 #include "karts/ghost_kart.hpp"
+#include "utils/log.hpp"
 #include "utils/string_utils.hpp"
 
 #include <algorithm>
@@ -59,6 +60,11 @@ irr::video::ITexture* DiscordAvatarManager::resolveTexture(Entry& e)
     {
         e.texture_attempted = true;
         e.texture = irr_driver->getTexture(e.avatar_path);
+        if (!e.texture)
+        {
+            Log::warn("DiscordAvatarManager",
+                      "Failed to load avatar texture '%s'.", e.avatar_path.c_str());
+        }
     }
     return e.texture;
 #else
@@ -125,6 +131,9 @@ void DiscordAvatarManager::registerParticipant(const std::string& username_utf8,
     e.avatar_path = avatar_path;
     m_username_meta[key] = std::move(e);
     m_version++;
+    Log::info("DiscordAvatarManager",
+              "Registered participant '%s' (display='%s', avatar='%s').",
+              key.c_str(), display_name_utf8.c_str(), avatar_path.c_str());
 }   // registerParticipant
 
 // ----------------------------------------------------------------------------
@@ -146,7 +155,16 @@ void DiscordAvatarManager::bindKartByUsername(AbstractKart* kart,
     if (!kart || username.empty()) return;
     std::string key = normalizeUsername(StringUtils::wideToUtf8(username));
     auto it = m_username_meta.find(key);
-    if (it == m_username_meta.end()) return;
+    if (it == m_username_meta.end())
+    {
+        if (!m_username_meta.empty())
+        {
+            Log::warn("DiscordAvatarManager",
+                      "No Discord participant metadata matched kart username '%s' (%u registered).",
+                      key.c_str(), (unsigned)m_username_meta.size());
+        }
+        return;
+    }
 
     const Entry& meta = it->second;
     bindKart(kart->getWorldKartId(), meta.display_name_utf8, meta.avatar_path);
@@ -162,6 +180,12 @@ void DiscordAvatarManager::bindKartByUsername(AbstractKart* kart,
         if (avatar_node)
         {
             avatar_node->setPosition(irr::core::vector3df(0.0f, 2.35f, 0.0f));
+        }
+        else
+        {
+            Log::warn("DiscordAvatarManager",
+                      "Failed to create 3D avatar billboard for '%s' ('%s').",
+                      key.c_str(), meta.avatar_path.c_str());
         }
     }
 #else
@@ -270,6 +294,12 @@ void DiscordAvatarManager::attachGhostBillboards(GhostKart* ghost,
         if (avatar_node)
         {
             avatar_node->setPosition(irr::core::vector3df(0.0f, 2.35f, 0.0f));
+        }
+        else
+        {
+            Log::warn("DiscordAvatarManager",
+                      "Failed to create 3D ghost avatar billboard for '%s' ('%s').",
+                      replay_path.c_str(), meta.avatar_path.c_str());
         }
     }
 #else

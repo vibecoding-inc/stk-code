@@ -121,9 +121,19 @@ export function create_discord_avatar_cache({
   cdn_base = resolve_discord_cdn_base(),
   size = 64,
   logger = console,
+  on_lifecycle = () => {},
 } = {}) {
   let path_by_key = new Map();
   let inflight_by_key = new Map();
+
+  function is_image_response(resp) {
+    let ct = resp && resp.headers && typeof resp.headers.get === "function"
+      ? (resp.headers.get("content-type") || "")
+      : "";
+    // Allow missing content-type in unit test mocks, but reject explicit HTML/JSON/text fallbacks.
+    if (!ct) return true;
+    return ct.toLowerCase().startsWith("image/");
+  }
 
   async function fetch_and_store({user_id, avatar}) {
     let fs = get_fs();
@@ -136,30 +146,69 @@ export function create_discord_avatar_cache({
     }
 
     let primary_url = build_discord_avatar_url({user_id, avatar, cdn_base, size});
+    let active_url = primary_url;
+    let used_fallback = false;
     let resp = await fetch_impl(primary_url);
 
     // Fall back to Discord default avatar if custom avatar hash returned 404.
     if (!resp.ok && avatar) {
-      let fallback_url = build_discord_avatar_url({user_id, avatar: null, cdn_base, size});
-      resp = await fetch_impl(fallback_url);
+      used_fallback = true;
+      active_url = build_discord_avatar_url({user_id, avatar: null, cdn_base, size});
+      resp = await fetch_impl(active_url);
     }
     if (!resp.ok) {
-      logger.warn(`Failed to fetch Discord avatar for ${user_id} (${resp.status})`);
+      logger.warn(`Failed to fetch Discord avatar for ${user_id} (${resp.status}) from ${active_url}`);
+      on_lifecycle("discord_avatar_failed", {
+        user_id: String(user_id),
+        url: active_url,
+        status: resp.status,
+        reason: "http_error",
+      });
+      return null;
+    }
+
+    if (!is_image_response(resp)) {
+      let ct = resp.headers.get("content-type") || "";
+      logger.warn(
+        `Unexpected Content-Type "${ct}" fetching Discord avatar from ${active_url} (check Discord URL Mapping /discord-cdn -> cdn.discordapp.com)`
+      );
+      on_lifecycle("discord_avatar_failed", {
+        user_id: String(user_id),
+        url: active_url,
+        status: resp.status,
+        content_type: ct,
+        reason: "non_image_content_type",
+      });
       return null;
     }
 
     let blob = await resp.blob();
     let png_bytes = await crop_impl(blob, size);
-    if (!png_bytes || png_bytes.length === 0) return null;
+    if (!png_bytes || png_bytes.length === 0) {
+      logger.warn(`Discord avatar crop returned empty bytes for ${user_id}`);
+      on_lifecycle("discord_avatar_failed", {
+        user_id: String(user_id),
+        url: active_url,
+        reason: "empty_png",
+      });
+      return null;
+    }
 
     ensure_dir(fs, AVATAR_DIR);
     let memfs_path = `${AVATAR_DIR}/${safe_id}.png`;
     fs.writeFile(memfs_path, png_bytes);
     path_by_key.set(cache_key, memfs_path);
+    on_lifecycle("discord_avatar_loaded", {
+      user_id: String(user_id),
+      used_fallback,
+      bytes: png_bytes.length,
+    });
     return memfs_path;
   }
 
   return {
+    cdn_base,
+
     async ensureAvatar({user_id, avatar = null}) {
       if (!user_id) return null;
       let safe_id = String(user_id).replace(/[^A-Za-z0-9_-]/g, "_");
@@ -173,6 +222,10 @@ export function create_discord_avatar_cache({
       let p = fetch_and_store({user_id, avatar})
         .catch((err) => {
           logger.warn(`Discord avatar load error for ${user_id}:`, err);
+          on_lifecycle("discord_avatar_failed", {
+            user_id: String(user_id),
+            reason: err && err.message ? err.message : String(err),
+          });
           return null;
         })
         .finally(() => {
@@ -250,12 +303,14 @@ export function create_participant_avatar_sync({
   get_module = () => (typeof Module !== "undefined" ? Module : null),
   get_heap_u8 = () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (typeof Module !== "undefined" ? Module.HEAPU8 : null)),
   logger = console,
+  on_lifecycle = () => {},
 } = {}) {
   let entries_by_username = new Map();
   let subscribed = false;
 
-  async function sync_users(users) {
+  async function sync_users(users, source = "unknown") {
     if (!Array.isArray(users) || !avatar_cache) return;
+    let avatars_loaded = 0;
     await Promise.all(
       users.map(async (u) => {
         if (!u || !u.id || !u.username) return;
@@ -265,19 +320,26 @@ export function create_participant_avatar_sync({
           user_id: String(u.id),
           avatar: u.avatar ? String(u.avatar) : null,
         })) || "";
+        if (avatar_path) avatars_loaded++;
 
         let entry = {username, display_name, avatar_path};
         entries_by_username.set(username.toLowerCase(), entry);
         push_participant_to_cpp(get_module(), get_heap_u8, entry);
       })
     );
+    on_lifecycle("discord_participants_synced", {
+      source,
+      count: users.length,
+      avatars_loaded,
+      cdn_base: avatar_cache.cdn_base || null,
+    });
   }
 
   return {
     async start() {
       let auth = get_discord_auth();
       if (auth && auth.user) {
-        await sync_users([auth.user]);
+        await sync_users([auth.user], "auth_self");
       }
 
       let sdk = get_discord_sdk();
@@ -287,11 +349,15 @@ export function create_participant_avatar_sync({
         try {
           let res = await sdk.commands.getInstanceConnectedParticipants();
           if (res && Array.isArray(res.participants)) {
-            await sync_users(res.participants);
+            await sync_users(res.participants, "initial_participants");
           }
         }
         catch (err) {
           logger.warn("getInstanceConnectedParticipants failed:", err);
+          on_lifecycle("discord_participants_sync_failed", {
+            stage: "initial",
+            reason: err && err.message ? err.message : String(err),
+          });
         }
       }
 
@@ -300,7 +366,7 @@ export function create_participant_avatar_sync({
         try {
           sdk.subscribe("ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE", (evt) => {
             if (evt && Array.isArray(evt.participants)) {
-              sync_users(evt.participants).catch((err) => {
+              sync_users(evt.participants, "live_update").catch((err) => {
                 logger.warn("Participant avatar update failed:", err);
               });
             }
@@ -315,9 +381,15 @@ export function create_participant_avatar_sync({
 
     flushToWasm() {
       let mod = get_module();
-      for (let entry of entries_by_username.values()) {
-        push_participant_to_cpp(mod, get_heap_u8, entry);
+      if (!mod || typeof mod._stk_discord_register_participant !== "function") {
+        logger.warn("flushToWasm skipped: _stk_discord_register_participant is not exported on Module.");
+        return;
       }
+      let pushed = 0;
+      for (let entry of entries_by_username.values()) {
+        if (push_participant_to_cpp(mod, get_heap_u8, entry)) pushed++;
+      }
+      on_lifecycle("discord_participants_flushed", {count: pushed});
     },
 
     _getEntries() {
