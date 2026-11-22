@@ -1,0 +1,32 @@
+services:
+  stk-gateway:
+    image: ghcr.io/vibecoding-inc/stk-code-gateway:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT_RANGE_START: "30000"
+      PORT_RANGE_END: "30016"
+      MAX_PLAYERS_PER_ROOM: "16"
+      ROOM_IDLE_TIMEOUT_SECS: "120"
+      RUST_LOG: "stk_gateway=info"
+
+  podium-renderer:
+    image: ghcr.io/vibecoding-inc/stk-code-podium-renderer:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "3000"
+      MAX_CONCURRENCY: "2"
+    # Internal-only service: reached exclusively from Cloudflare Workers via
+    # Workers VPC through the `cloudflared` tunnel below (no public host ports).
+    expose:
+      - "3000"
+    cpus: "0.5"
+    mem_limit: "256m"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}"
