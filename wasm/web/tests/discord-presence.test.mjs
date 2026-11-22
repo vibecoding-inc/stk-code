@@ -107,6 +107,17 @@ test("build_presence_activity handles lobby, spectating, and results cleanly", (
   assert.equal(lobby.state, "Waiting to race");
   assert.deepEqual(lobby.party, {id: "inst-1", size: [2, 8]});
 
+  let lobby_unknown_max = build_presence_activity(
+    {
+      phase: "lobby",
+      in_multiplayer: true,
+      human_players: 1,
+      max_players: 0,
+    },
+    {instance_id: "inst-1"}
+  );
+  assert.equal(lobby_unknown_max.party, undefined);
+
   let spectating = build_presence_activity(
     {
       phase: "spectating",

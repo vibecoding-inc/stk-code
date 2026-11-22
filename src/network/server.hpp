@@ -146,6 +146,7 @@ public:
     // ------------------------------------------------------------------------
     /** Returns the maximum number of players allowed on this server. */
     const int getMaxPlayers() const { return m_max_players; }
+    void setMaxPlayers(int max_players) { m_max_players = max_players; }
     // ------------------------------------------------------------------------
     /** Returns the number of currently connected players. */
     const int getCurrentPlayers() const { return m_current_players; }

@@ -187,8 +187,10 @@ export function build_presence_activity(snapshot, {
     activity.assets = assets;
   }
 
-  // Only count human players in party.size so AI bots never mark a lobby full.
-  if (in_multiplayer && instance_id && human_players >= 1) {
+  // Only count human players in party.size so AI bots never mark a lobby full,
+  // and wait until the server has reported its real max_players (> 0) so we
+  // never flash "(1 of 1)" before LE_SERVER_INFO arrives.
+  if (in_multiplayer && instance_id && human_players >= 1 && max_players >= 1) {
     let cap = max_players >= human_players ? max_players : human_players;
     activity.party = {
       id: String(instance_id),

@@ -31,6 +31,7 @@
 #include "input/device_manager.hpp"
 #include "input/input_device.hpp"
 #include "io/file_manager.hpp"
+#include "io/rich_presence.hpp"
 #include "items/network_item_manager.hpp"
 #include "items/powerup_manager.hpp"
 #include "karts/abstract_kart.hpp"
@@ -750,6 +751,8 @@ void ClientLobby::handleServerInfo(Event* event)
     total_lines += L"\n";
 
     unsigned max_player = data.getUInt8();
+    if (m_server && max_player > 0)
+        m_server->setMaxPlayers((int)max_player);
     //I18N: In the networking lobby
     total_lines += _("Max players: %d", (int)max_player);
     total_lines += L"\n";
@@ -826,6 +829,7 @@ void ClientLobby::handleServerInfo(Event* event)
         NetworkingLobby::getInstance()->toggleServerConfigButton(server_config);
     m_server_live_joinable = data.getUInt8() == 1;
     NetworkConfig::get()->setTuxHitboxAddon(m_server_live_joinable);
+    RichPresenceNS::RichPresence::get()->update(true);
 }   // handleServerInfo
 
 //-----------------------------------------------------------------------------
