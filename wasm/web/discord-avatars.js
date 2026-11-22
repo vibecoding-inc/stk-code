@@ -246,7 +246,11 @@ export function create_discord_avatar_cache({
 const text_encoder = new TextEncoder();
 
 function push_participant_to_cpp(module, get_heap_u8, {username, display_name, avatar_path}) {
-  if (!module || typeof module._stk_discord_register_participant !== "function") {
+  if (
+    !module ||
+    module.ABORT ||
+    typeof module._stk_discord_register_participant !== "function"
+  ) {
     return false;
   }
   let alloc = module._stk_tt_alloc || module._malloc;
@@ -307,6 +311,10 @@ export function create_participant_avatar_sync({
 } = {}) {
   let entries_by_username = new Map();
   let subscribed = false;
+  // Never call exported WASM functions (_stk_tt_alloc / _stk_discord_register_participant)
+  // before C++'s main() invokes flushToWasm(); calling native functions while on the
+  // pre-launch HTML screen triggers Emscripten's -sASSERTIONS=1 runtime-init abort.
+  let wasm_ready = false;
 
   async function sync_users(users, source = "unknown") {
     if (!Array.isArray(users) || !avatar_cache) return;
@@ -324,7 +332,9 @@ export function create_participant_avatar_sync({
 
         let entry = {username, display_name, avatar_path};
         entries_by_username.set(username.toLowerCase(), entry);
-        push_participant_to_cpp(get_module(), get_heap_u8, entry);
+        if (wasm_ready) {
+          push_participant_to_cpp(get_module(), get_heap_u8, entry);
+        }
       })
     );
     on_lifecycle("discord_participants_synced", {
@@ -380,6 +390,7 @@ export function create_participant_avatar_sync({
     },
 
     flushToWasm() {
+      wasm_ready = true;
       let mod = get_module();
       if (!mod || typeof mod._stk_discord_register_participant !== "function") {
         logger.warn("flushToWasm skipped: _stk_discord_register_participant is not exported on Module.");

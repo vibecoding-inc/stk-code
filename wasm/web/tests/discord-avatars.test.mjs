@@ -128,12 +128,17 @@ test("create_participant_avatar_sync syncs connected participants and live updat
   });
 
   await sync.start();
+  // Must NOT call WASM exports before C++ invokes flushToWasm() (runtime init guard).
+  assert.equal(registered.length, 0);
+
+  // Once C++ boots and invokes flushToWasm(), buffered participants are pushed.
+  sync.flushToWasm();
   assert.equal(registered.length, 1);
   assert.equal(registered[0].username, "alice");
   assert.equal(registered[0].display_name, "Alice!");
   assert.equal(registered[0].avatar_path, "/tmp/discord_avatars/111.png");
 
-  // Simulate a second player joining live
+  // Subsequent live joins push immediately now that WASM is running.
   update_handler({
     participants: [
       {id: "111", username: "alice", global_name: "Alice!", avatar: "hash1"},
