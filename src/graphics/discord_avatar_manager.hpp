@@ -50,8 +50,6 @@ public:
         std::string display_name_utf8;
         irr::core::stringw display_name_wide;
         std::string avatar_path;
-        irr::video::ITexture* texture = nullptr;
-        bool texture_attempted = false;
     };
 
 private:
@@ -61,7 +59,7 @@ private:
 
     DiscordAvatarManager() = default;
 
-    static irr::video::ITexture* resolveTexture(UserEntry& e);
+    static irr::video::ITexture* resolveTexture(const UserEntry& e);
 
 public:
     static DiscordAvatarManager* get();

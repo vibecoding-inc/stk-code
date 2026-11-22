@@ -40,22 +40,18 @@
 #endif
 
 // ----------------------------------------------------------------------------
-irr::video::ITexture* DiscordAvatarManager::resolveTexture(UserEntry& e)
+irr::video::ITexture* DiscordAvatarManager::resolveTexture(const UserEntry& e)
 {
 #ifndef SERVER_ONLY
-    if (GUIEngine::isNoGraphics() || e.avatar_path.empty())
+    if (GUIEngine::isNoGraphics() || !irr_driver || e.avatar_path.empty())
         return nullptr;
-    if (!e.texture_attempted)
-    {
-        e.texture_attempted = true;
-        e.texture = irr_driver->getTexture(e.avatar_path);
-        if (!e.texture)
-        {
-            Log::warn("DiscordAvatarManager",
-                      "Failed to load avatar texture '%s'.", e.avatar_path.c_str());
-        }
-    }
-    return e.texture;
+    // Always query STKTexManager via irr_driver->getTexture() rather than
+    // caching a raw non-owning ITexture* here: IrrDriver::addBillboard()
+    // creates a temporary Material whose destructor unloads and removes the
+    // texture from STKTexManager during Track::cleanup() / popTempMaterial(),
+    // which would leave a cached raw pointer dangling on the next race.
+    // STKTexManager already caches loaded textures (and failed lookups) in O(1).
+    return irr_driver->getTexture(e.avatar_path);
 #else
     (void)e;
     return nullptr;
@@ -104,8 +100,6 @@ void DiscordAvatarManager::registerUser(const std::string& user_id,
     if (!avatar_path.empty() && avatar_path != e.avatar_path)
     {
         e.avatar_path = avatar_path;
-        e.texture = nullptr;
-        e.texture_attempted = false;
     }
     m_version++;
     Log::info("DiscordAvatarManager",
