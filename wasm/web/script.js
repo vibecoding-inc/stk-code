@@ -3,6 +3,7 @@ import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import {
   init_discord_activity,
+  detect_mobile_touch,
   can_open_invite_dialog,
   open_discord_invite_dialog,
 } from "/discord-activity.js";
@@ -851,6 +852,7 @@ async function start_game({connect_to_lobby = false, time_trial = null} = {}) {
     log_lifecycle("engine_launch", {
       quality: selected_quality,
       connect_to_lobby,
+      mobile_touch: globalThis.stkIsMobileTouch(),
       viewport: `${window.innerWidth}x${window.innerHeight}`,
     });
     if (telemetry) telemetry.flush();
@@ -911,6 +913,12 @@ Module["canvas"].addEventListener("webglcontextrestored", () => {
 globalThis.main = main;
 globalThis.sync_idbfs = sync_idbfs;
 globalThis.load_idbfs = load_idbfs;
+globalThis.stkIsMobileTouch = () =>
+  detect_mobile_touch({
+    search: window.location.search,
+    global_scope: globalThis,
+    navigator_obj: navigator,
+  });
 
 let scoreboard_sharer = create_scoreboard_sharer({
   get_canvas: () => Module["canvas"],

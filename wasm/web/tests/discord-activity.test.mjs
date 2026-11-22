@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   init_discord_activity,
+  detect_mobile_touch,
   can_open_invite_dialog,
   open_discord_invite_dialog,
 } from "../discord-activity.js";
@@ -348,4 +349,78 @@ test("open_discord_invite_dialog invokes openInviteDialog and handles errors", {
     logger: {warn() {}},
   });
   assert.equal(skipped, false);
+});
+
+test("detect_mobile_touch prefers Discord platform over UA and avoids desktop touchscreen false positives", {concurrency: false}, () => {
+  // Discord SDK platform property is authoritative
+  assert.equal(
+    detect_mobile_touch({
+      search: "?frame_id=1&platform=desktop",
+      global_scope: {discordSdk: {platform: "mobile"}},
+      navigator_obj: {userAgent: "Mozilla/5.0 (X11; Linux x86_64)"},
+    }),
+    true
+  );
+  assert.equal(
+    detect_mobile_touch({
+      search: "?frame_id=1&platform=mobile",
+      global_scope: {discordSdk: {platform: "desktop"}},
+      navigator_obj: {userAgent: "Mozilla/5.0 (Linux; Android 14)"},
+    }),
+    false
+  );
+
+  // Discord URL query param works before SDK finishes init
+  assert.equal(
+    detect_mobile_touch({
+      search: "?frame_id=1&platform=mobile",
+      global_scope: {},
+      navigator_obj: {userAgent: "Mozilla/5.0 (X11; Linux x86_64)"},
+    }),
+    true
+  );
+  assert.equal(
+    detect_mobile_touch({
+      search: "?frame_id=1&platform=desktop",
+      global_scope: {},
+      navigator_obj: {userAgent: "Mozilla/5.0 (Windows NT 10.0)", maxTouchPoints: 10},
+    }),
+    false
+  );
+
+  // Inside Discord without platform param -> desktop
+  assert.equal(
+    detect_mobile_touch({
+      search: "?frame_id=1",
+      global_scope: {},
+      navigator_obj: {userAgent: "Mozilla/5.0 (Linux; Android 14)"},
+    }),
+    false
+  );
+
+  // Standalone browser fallback (outside Discord)
+  assert.equal(
+    detect_mobile_touch({
+      search: "",
+      global_scope: {},
+      navigator_obj: {userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8)"},
+    }),
+    true
+  );
+  assert.equal(
+    detect_mobile_touch({
+      search: "",
+      global_scope: {},
+      navigator_obj: {userAgentData: {mobile: true}},
+    }),
+    true
+  );
+  assert.equal(
+    detect_mobile_touch({
+      search: "",
+      global_scope: {},
+      navigator_obj: {userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", maxTouchPoints: 10},
+    }),
+    false
+  );
 });

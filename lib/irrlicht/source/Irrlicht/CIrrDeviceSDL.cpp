@@ -16,6 +16,9 @@
 #include "COSOperator.h"
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include "SIrrCreationParameters.h"
 #include "COpenGLExtensionHandler.h"
 #include "COGLES2Driver.h"
@@ -1631,7 +1634,21 @@ void CIrrDeviceSDL::createKeyMap()
 
 bool CIrrDeviceSDL::supportsTouchDevice() const
 {
+#ifdef __EMSCRIPTEN__
+	int is_mobile_touch = EM_ASM_INT({
+		if (typeof globalThis.stkIsMobileTouch === "function") {
+			return globalThis.stkIsMobileTouch() ? 1 : 0;
+		}
+		try {
+			var p = new URLSearchParams(window.location.search).get("platform");
+			if (p) return p.toLowerCase() === "mobile" ? 1 : 0;
+		} catch (e) {}
+		return 0;
+	});
+	return is_mobile_touch != 0;
+#else
 	return SDL_GetNumTouchDevices() > 0;
+#endif
 }
 
 

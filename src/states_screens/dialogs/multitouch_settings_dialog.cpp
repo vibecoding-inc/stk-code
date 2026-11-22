@@ -168,6 +168,14 @@ GUIEngine::EventPropagation MultitouchSettingsDialog::processEvent(
         UserConfigParams::m_multitouch_scale.revertToDefaults();
         UserConfigParams::m_multitouch_sensitivity_x.revertToDefaults();
     
+#ifdef __EMSCRIPTEN__
+        UserConfigParams::m_multitouch_controls = MULTITOUCH_CONTROLS_STEERING_WHEEL;
+        UserConfigParams::m_multitouch_auto_acceleration = true;
+        if (StateManager::get()->getGameState() != GUIEngine::INGAME_MENU)
+        {
+            UserConfigParams::m_multitouch_draw_gui = true;
+        }
+#else
         if (StateManager::get()->getGameState() != GUIEngine::INGAME_MENU)
         {
 #ifdef MOBILE_STK
@@ -176,6 +184,7 @@ GUIEngine::EventPropagation MultitouchSettingsDialog::processEvent(
             UserConfigParams::m_multitouch_draw_gui.revertToDefaults();
 #endif
         }
+#endif
 
         updateValues();
 

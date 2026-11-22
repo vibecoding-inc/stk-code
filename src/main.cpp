@@ -1919,6 +1919,18 @@ void initRest()
     IrrlichtDevice* device = irr_driver->getDevice();
     video::IVideoDriver* driver = device->getVideoDriver();
 
+#ifdef __EMSCRIPTEN__
+    if (device->supportsTouchDevice() &&
+        UserConfigParams::m_multitouch_controls == MULTITOUCH_CONTROLS_UNDEFINED)
+    {
+        UserConfigParams::m_multitouch_draw_gui = true;
+        UserConfigParams::m_multitouch_controls = MULTITOUCH_CONTROLS_STEERING_WHEEL;
+        UserConfigParams::m_multitouch_auto_acceleration = true;
+        Log::info("main", "Mobile touch controls enabled by default "
+                  "(steering wheel + auto acceleration).");
+    }
+#endif
+
     if (UserConfigParams::m_gamepad_visualisation)
     {
         gamepadVisualisation();

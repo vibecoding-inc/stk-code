@@ -74,6 +74,47 @@ export async function init_discord_activity({
   }
 }
 
+export function detect_mobile_touch({
+  search = typeof window !== "undefined" && window.location ? window.location.search : "",
+  global_scope = globalThis,
+  navigator_obj = typeof navigator !== "undefined" ? navigator : null,
+} = {}) {
+  // 1. Authoritative Discord Activity SDK platform ("mobile" vs "desktop").
+  let sdk_platform = global_scope && global_scope.discordSdk && global_scope.discordSdk.platform;
+  if (typeof sdk_platform === "string" && sdk_platform.length > 0) {
+    return sdk_platform.toLowerCase() === "mobile";
+  }
+
+  // 2. Authoritative Discord Activity URL query param (?platform=mobile|desktop).
+  try {
+    let params = new URLSearchParams(search || "");
+    let query_platform = params.get("platform");
+    if (query_platform) {
+      return query_platform.toLowerCase() === "mobile";
+    }
+    if (params.has("frame_id")) {
+      return false;
+    }
+  }
+  catch {}
+
+  // 3. Standalone browser fallback (outside Discord): mobile UA only so desktop
+  //    touchscreen laptops are not misclassified as mobile.
+  try {
+    if (navigator_obj) {
+      if (navigator_obj.userAgentData && typeof navigator_obj.userAgentData.mobile === "boolean") {
+        return navigator_obj.userAgentData.mobile;
+      }
+      if (typeof navigator_obj.userAgent === "string") {
+        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator_obj.userAgent);
+      }
+    }
+  }
+  catch {}
+
+  return false;
+}
+
 export function can_open_invite_dialog(global_scope = globalThis) {
   let sdk = global_scope && global_scope.discordSdk;
   return Boolean(

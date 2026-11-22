@@ -432,8 +432,14 @@ export async function collect_environment_diagnostics({global_scope} = {}) {
   let doc = scope.document || null;
 
   let is_discord_activity = false;
+  let discord_platform = null;
   try {
-    is_discord_activity = new URLSearchParams(loc.search || "").has("frame_id");
+    let params = new URLSearchParams(loc.search || "");
+    is_discord_activity = params.has("frame_id");
+    let platform_param = params.get("platform");
+    if (platform_param) {
+      discord_platform = platform_param.toLowerCase();
+    }
   }
   catch {}
 
@@ -448,7 +454,10 @@ export async function collect_environment_diagnostics({global_scope} = {}) {
 
   let is_mobile = false;
   try {
-    if (nav.userAgentData && typeof nav.userAgentData.mobile === "boolean") {
+    if (discord_platform === "mobile" || discord_platform === "desktop") {
+      is_mobile = discord_platform === "mobile";
+    }
+    else if (nav.userAgentData && typeof nav.userAgentData.mobile === "boolean") {
       is_mobile = nav.userAgentData.mobile;
     }
     else if (typeof nav.userAgent === "string") {
@@ -459,6 +468,7 @@ export async function collect_environment_diagnostics({global_scope} = {}) {
 
   let diag = {
     is_discord_activity,
+    discord_platform,
     in_iframe,
     is_mobile,
     cross_origin_isolated: scope.crossOriginIsolated === true,

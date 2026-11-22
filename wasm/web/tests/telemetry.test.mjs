@@ -644,3 +644,25 @@ test("recommend_quality selects high, mid, or low based on device capabilities",
   }), "low");
   assert.equal(recommend_quality(null), "low");
 });
+
+test("collect_environment_diagnostics reads Discord platform query param", {concurrency: false}, async () => {
+  let mobile_diag = await collect_environment_diagnostics({
+    global_scope: {
+      location: {search: "?frame_id=123&platform=mobile"},
+      navigator: {userAgent: "Mozilla/5.0 (X11; Linux x86_64)"},
+    },
+  });
+  assert.equal(mobile_diag.is_discord_activity, true);
+  assert.equal(mobile_diag.discord_platform, "mobile");
+  assert.equal(mobile_diag.is_mobile, true);
+
+  let desktop_diag = await collect_environment_diagnostics({
+    global_scope: {
+      location: {search: "?frame_id=123&platform=desktop"},
+      navigator: {userAgent: "Mozilla/5.0 (Linux; Android 14)"},
+    },
+  });
+  assert.equal(desktop_diag.is_discord_activity, true);
+  assert.equal(desktop_diag.discord_platform, "desktop");
+  assert.equal(desktop_diag.is_mobile, false);
+});
