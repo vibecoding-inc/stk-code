@@ -9,6 +9,7 @@ import {
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
 import { create_scoreboard_sharer, is_discord_share_available } from "/discord-share.js";
 import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
+import { create_time_trials_bridge } from "/time-trials.js";
 import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
 let db = null;
@@ -624,18 +625,40 @@ async function main() {
     logger: console,
   });
 
+  globalThis.stkTimeTrials = create_time_trials_bridge({
+    fetch_impl: (...args) => fetch(...args),
+    get_session_token: () => globalThis.discordSessionToken || null,
+    get_pending: () => globalThis.stkPendingTimeTrial || null,
+    get_fs: () => (typeof FS !== "undefined" ? FS : null),
+    get_module: () => Module,
+    get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
+    gzip_impl: (bytes) => pako.gzip(bytes),
+    logger: console,
+    on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
+  });
+
   if (discord_username && player_badge && player_badge_text) {
     player_badge_text.textContent = `Playing as ${discord_username}`;
     player_badge.classList.add("is-visible");
   }
 
+  let pending_tt = globalThis.stkTimeTrials.getPendingChallenge();
   let can_auto_join_lobby = Boolean(
+    !pending_tt &&
     globalThis.stkLanBridge &&
     typeof globalThis.stkLanBridge.isAvailable === "function" &&
     globalThis.stkLanBridge.isAvailable()
   );
 
-  if (can_auto_join_lobby) {
+  if (pending_tt) {
+    let label = pending_tt.track_name || pending_tt.track || "Time Trial";
+    start_button.textContent = `Play Time Trial — ${label}`;
+    start_button.onclick = () => start_game({connect_to_lobby: false, time_trial: pending_tt});
+    if (secondary_start_button) {
+      secondary_start_button.classList.remove("is-visible");
+    }
+  }
+  else if (can_auto_join_lobby) {
     start_button.textContent = "Join Activity Lobby";
     start_button.onclick = () => start_game({connect_to_lobby: true});
     if (secondary_start_button) {
@@ -653,9 +676,11 @@ async function main() {
   }
   start_button.disabled = false;
   set_loading_state({
-    text: can_auto_join_lobby
-      ? "Ready to race! Join your Discord Activity lobby or open the main menu."
-      : "Ready to race! Choose texture quality and press Start Game.",
+    text: pending_tt
+      ? `Time Trial ready: ${pending_tt.track_name || pending_tt.track} (${pending_tt.laps} laps)`
+      : can_auto_join_lobby
+        ? "Ready to race! Join your Discord Activity lobby or open the main menu."
+        : "Ready to race! Choose texture quality and press Start Game.",
     percent: 100,
     indeterminate: false,
     spinning: false,
@@ -663,7 +688,7 @@ async function main() {
   if (telemetry) telemetry.flush();
 }
 
-async function start_game({connect_to_lobby = false} = {}) {
+async function start_game({connect_to_lobby = false, time_trial = null} = {}) {
   game_started = true;
   start_button.disabled = true;
   if (secondary_start_button) secondary_start_button.disabled = true;
@@ -675,13 +700,27 @@ async function start_game({connect_to_lobby = false} = {}) {
   log_lifecycle("start_clicked", {
     quality: selected_quality,
     connect_to_lobby,
+    time_trial_id: time_trial ? time_trial.challenge_id : null,
     viewport: `${window.innerWidth}x${window.innerHeight}`,
   });
   try {
     await load_data();
     await wait_for_frame();
 
-    if (connect_to_lobby && globalThis.stkLanBridge && typeof globalThis.stkLanBridge.preconnect === "function") {
+    if (time_trial && globalThis.stkTimeTrials) {
+      set_loading_state({
+        text: "Downloading Time Trial ghosts...",
+        indeterminate: true,
+        spinning: true,
+      });
+      await globalThis.stkTimeTrials.fetchChallengeAndGhosts(time_trial.challenge_id);
+      set_loading_state({
+        text: "Launching Time Trial...",
+        indeterminate: true,
+        spinning: true,
+      });
+    }
+    else if (connect_to_lobby && globalThis.stkLanBridge && typeof globalThis.stkLanBridge.preconnect === "function") {
       let status_labels = {
         connecting: "Connecting to multiplayer gateway...",
         authenticating: "Authenticating with Discord...",

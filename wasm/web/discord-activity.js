@@ -44,10 +44,14 @@ export async function init_discord_activity({
       scope: ["identify"],
     });
 
+    let token_payload = {code};
+    if (discord_sdk.instanceId) {
+      token_payload.instance_id = discord_sdk.instanceId;
+    }
     let response = await fetch_impl("/api/token", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({code}),
+      body: JSON.stringify(token_payload),
     });
     let result = await response.json();
     if (!response.ok || !result.access_token) {
@@ -58,6 +62,8 @@ export async function init_discord_activity({
     global_scope.discordSdk = discord_sdk;
     global_scope.discordAuth = auth;
     global_scope.discordAccessToken = result.access_token;
+    global_scope.discordSessionToken = result.session_token || null;
+    global_scope.stkPendingTimeTrial = result.pending_time_trial || null;
     logger.log(`Discord login succeeded for ${auth.user.username}.`);
     return auth;
   }
