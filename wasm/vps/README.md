@@ -27,3 +27,14 @@ This directory holds the Docker Compose stack deployed on the VPS that runs:
    cd wasm
    npx wrangler secret put PODIUM_RENDER_SECRET
    ```
+
+## Automatic Image Updates (systemd)
+
+`stk-stack-update.service` and `stk-stack-update.timer` poll GHCR / Docker Hub every 5 minutes and recreate `stk-gateway`, `podium-renderer`, and `cloudflared` whenever a newer image is published:
+
+```bash
+sudo cp stk-stack-update.service stk-stack-update.timer /etc/systemd/system/
+# Edit WorkingDirectory in /etc/systemd/system/stk-stack-update.service to match your VPS path
+sudo systemctl daemon-reload
+sudo systemctl enable --now stk-stack-update.timer
+```

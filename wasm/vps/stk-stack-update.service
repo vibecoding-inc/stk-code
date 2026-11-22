@@ -1,0 +1,12 @@
+[Unit]
+Description=Pull and recreate SuperTuxKart VPS Docker Compose services if newer images are available
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Replace with the directory containing docker-compose.yaml on your VPS.
+WorkingDirectory=/opt/stk-vps
+ExecStart=/usr/bin/docker compose pull stk-gateway podium-renderer cloudflared
+ExecStart=/usr/bin/docker compose up -d stk-gateway podium-renderer cloudflared
+ExecStartPost=/usr/bin/docker image prune -f --filter "until=24h"
