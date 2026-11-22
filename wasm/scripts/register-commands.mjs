@@ -66,13 +66,49 @@ export async function register_commands({
     ? `https://discord.com/api/v10/applications/${encodeURIComponent(client_id)}/guilds/${encodeURIComponent(guild_id)}/commands`
     : `https://discord.com/api/v10/applications/${encodeURIComponent(client_id)}/commands`;
 
+  let body = [...COMMANDS];
+
+  // Discord rejects bulk PUT on global commands with code 50240 if the app's
+  // PRIMARY_ENTRY_POINT command (type 4, used to launch Activities) is omitted.
+  // Fetch existing global commands first and preserve any type 4 entry point.
+  if (!guild_id) {
+    let existing_resp = await fetch_impl(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bot ${bot_token}`,
+      },
+    });
+    if (!existing_resp.ok) {
+      let text = await existing_resp.text();
+      throw new Error(`Failed to fetch existing Discord commands (${existing_resp.status}): ${text}`);
+    }
+    let existing = await existing_resp.json();
+    if (Array.isArray(existing)) {
+      for (let cmd of existing) {
+        if (cmd && cmd.type === 4) {
+          let preserved = {
+            name: cmd.name,
+            description: cmd.description || "",
+            type: 4,
+          };
+          if (cmd.handler !== undefined) preserved.handler = cmd.handler;
+          if (cmd.integration_types !== undefined) preserved.integration_types = cmd.integration_types;
+          if (cmd.contexts !== undefined) preserved.contexts = cmd.contexts;
+          if (cmd.name_localizations !== undefined) preserved.name_localizations = cmd.name_localizations;
+          if (cmd.description_localizations !== undefined) preserved.description_localizations = cmd.description_localizations;
+          body.push(preserved);
+        }
+      }
+    }
+  }
+
   let resp = await fetch_impl(url, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bot ${bot_token}`,
     },
-    body: JSON.stringify(COMMANDS),
+    body: JSON.stringify(body),
   });
 
   if (!resp.ok) {

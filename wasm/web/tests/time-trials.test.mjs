@@ -5,6 +5,7 @@ import { handleTokenExchange } from "../../worker/token.mjs";
 import { handleTimeTrials } from "../../worker/time-trials.mjs";
 import { sign_jwt } from "../../worker/jwt.mjs";
 import { autocomplete_tracks } from "../../worker/tracks.mjs";
+import { register_commands } from "../../scripts/register-commands.mjs";
 
 const TEST_JWT_SECRET = "time-trials-test-jwt-secret-0123456789";
 
@@ -426,4 +427,51 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
   let dm_cmd_body = await dm_cmd_resp.json();
   assert.match(dm_cmd_body.data.embeds[0].description, /Alice/);
   assert.match(dm_cmd_body.data.embeds[0].description, /1:24\.231/);
+});
+
+test("register_commands preserves Discord PRIMARY_ENTRY_POINT (type 4) command during global bulk PUT", async () => {
+  let put_body = null;
+  let fetch_impl = async (url, init) => {
+    if (init.method === "GET") {
+      return new Response(
+        JSON.stringify([
+          {
+            id: "entry_1",
+            application_id: "app_123",
+            version: "999",
+            type: 4,
+            name: "launch",
+            description: "Launch SuperTuxKart",
+            handler: 2,
+            integration_types: [0, 1],
+            contexts: [0, 1, 2],
+          },
+          {
+            id: "old_cmd",
+            type: 1,
+            name: "deprecated",
+            description: "Old command",
+          },
+        ]),
+        {status: 200}
+      );
+    }
+    assert.equal(init.method, "PUT");
+    put_body = JSON.parse(init.body);
+    return new Response(JSON.stringify(put_body), {status: 200});
+  };
+
+  let registered = await register_commands({
+    client_id: "app_123",
+    bot_token: "bot_123",
+    fetch_impl,
+  });
+
+  assert.equal(registered.length, 2);
+  assert.ok(put_body.some((c) => c.name === "timetrial" && c.type === 1));
+  let entry = put_body.find((c) => c.type === 4);
+  assert.ok(entry);
+  assert.equal(entry.name, "launch");
+  assert.equal(entry.handler, 2);
+  assert.equal(entry.application_id, undefined);
 });
