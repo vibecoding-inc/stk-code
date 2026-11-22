@@ -92,7 +92,8 @@ RaceResultGUI::RaceResultGUI() : Screen("race_result.stkgui",
     m_saved_left_visible(false),
     m_saved_middle_visible(false),
     m_saved_right_visible(false),
-    m_saved_share_visible(false)
+    m_saved_share_visible(false),
+    m_has_any_avatar(false)
 {
 }   // RaceResultGUI
 
@@ -1021,6 +1022,7 @@ void RaceResultGUI::determineTableLayout()
 
     // Remove previous entries to avoid reserved kart in network being displayed
     m_all_row_infos.clear();
+    m_has_any_avatar = false;
     // In FTL races the leader kart is not displayed
     m_all_row_infos.resize(num_karts);
 
@@ -1047,7 +1049,9 @@ void RaceResultGUI::determineTableLayout()
         RowInfo *ri = &(m_all_row_infos[position - first_position]);
         ri->m_kart_id = kart->getWorldKartId();
         ri->m_is_player_kart = kart->getController()->isLocalPlayerController();
-        ri->m_kart_name = kart->getController()->getName();
+        core::stringw discord_name =
+            DiscordAvatarManager::get()->getDisplayNameForKart(kart);
+        ri->m_kart_name = discord_name.empty() ? kart->getController()->getName() : discord_name;
         if (RaceManager::get()->getKartGlobalPlayerId(kart->getWorldKartId()) > -1)
         {
             const core::stringw& flag = StringUtils::getCountryFlag(
@@ -1058,11 +1062,10 @@ void RaceResultGUI::determineTableLayout()
                 ri->m_kart_name += flag;
             }
         }
-        video::ITexture *icon =
-            DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
-        if (!icon)
-            icon = kart->getKartProperties()->getIconMaterial()->getTexture();
-        ri->m_kart_icon = icon;
+        ri->m_kart_icon = kart->getKartProperties()->getIconMaterial()->getTexture();
+        ri->m_avatar_icon = DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
+        if (ri->m_avatar_icon)
+            m_has_any_avatar = true;
         ri->m_kart_color = RaceManager::get()->getKartColor(kart->getWorldKartId());
 
         // FTL karts will get a time assigned, they are not shown as eliminated
@@ -1180,6 +1183,8 @@ void RaceResultGUI::determineTableLayout()
     m_width_all_points = r_all_p.Width;
 
     m_table_width = m_width_icon + m_width_column_space + m_width_kart_name;
+    if (m_has_any_avatar)
+        m_table_width += m_width_icon + m_width_column_space;
 
     if (!RaceManager::get()->isFollowMode())
         m_table_width += m_width_finish_time + m_width_column_space;
@@ -1509,11 +1514,14 @@ void RaceResultGUI::determineGPLayout()
         old_rank[kart_id] = rank;
         const AbstractKart *kart = World::getWorld()->getKart(kart_id);
         RowInfo *ri = &(m_all_row_infos[rank]);
-        ri->m_kart_icon = DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
-        if (!ri->m_kart_icon)
-            ri->m_kart_icon = kart->getKartProperties()->getIconMaterial()->getTexture();
+        ri->m_kart_icon = kart->getKartProperties()->getIconMaterial()->getTexture();
+        ri->m_avatar_icon = DiscordAvatarManager::get()->getAvatarTextureForKart(kart);
+        if (ri->m_avatar_icon)
+            m_has_any_avatar = true;
         ri->m_is_player_kart = kart->getController()->isLocalPlayerController();
-        ri->m_kart_name = kart->getController()->getName();
+        core::stringw discord_name =
+            DiscordAvatarManager::get()->getDisplayNameForKart(kart);
+        ri->m_kart_name = discord_name.empty() ? kart->getController()->getName() : discord_name;
         if (RaceManager::get()->getKartGlobalPlayerId(kart->getWorldKartId()) > -1)
         {
             const core::stringw& flag = StringUtils::getCountryFlag(
@@ -1616,8 +1624,8 @@ void RaceResultGUI::displayOneEntry(unsigned int x, unsigned int y,
             current_x + m_width_icon + extra_width, y + m_width_icon + extra_width);
         draw2DImage(m_icons_frame, dest_rect, source_rect, NULL, colors, true);
     }
-    // First draw the icon
-    // -------------------
+    // First draw the kart icon
+    // ------------------------
     if (ri->m_kart_icon)
     {
         core::recti source_rect(core::vector2di(0, 0),
@@ -1630,6 +1638,23 @@ void RaceResultGUI::displayOneEntry(unsigned int x, unsigned int y,
     }
 
     current_x += m_width_icon + m_width_column_space;
+
+    // Then draw the circular Discord avatar icon if any row has one
+    // -------------------------------------------------------------
+    if (m_has_any_avatar)
+    {
+        if (ri->m_avatar_icon)
+        {
+            core::recti source_rect(core::vector2di(0, 0),
+                ri->m_avatar_icon->getSize());
+            core::recti dest_rect(current_x, y,
+                current_x + m_width_icon, y + m_width_icon);
+            draw2DImage(ri->m_avatar_icon, dest_rect,
+                source_rect, NULL, NULL,
+                true);
+        }
+        current_x += m_width_icon + m_width_column_space;
+    }
 
     // Draw the name
     // -------------

@@ -563,6 +563,30 @@ async function handleGetChallenge({request, env, challenge_id}) {
   }
 
   let track_info = get_track(challenge.track);
+  let me_row = await env.TIME_TRIALS_DB
+    .prepare(
+      `SELECT u.user_id, u.display_name, u.username, u.avatar,
+              sm.guild_nick, sm.guild_avatar
+       FROM users u
+       LEFT JOIN scope_members sm
+         ON sm.user_id = u.user_id
+        AND sm.scope_type = ?
+        AND sm.scope_id = ?
+       WHERE u.user_id = ?`
+    )
+    .bind(challenge.scope_type, challenge.scope_id, claims.sub)
+    .first();
+
+  let scope_guild_id = challenge.scope_type === "guild" ? challenge.scope_id : null;
+  let me = {
+    user_id: claims.sub,
+    display_name: (me_row && (me_row.guild_nick || me_row.display_name || me_row.username)) ||
+      claims.display_name || claims.username || "Player",
+    avatar: (me_row && me_row.avatar) || null,
+    guild_avatar: (me_row && me_row.guild_avatar) || null,
+    guild_id: scope_guild_id,
+  };
+
   return json_response({
     challenge: {
       challenge_id: challenge.challenge_id,
@@ -572,11 +596,13 @@ async function handleGetChallenge({request, env, challenge_id}) {
       laps: challenge.laps,
       reverse: Boolean(challenge.reverse),
     },
+    me,
     total_players: lb.total_players,
     leaderboard: lb.entries,
     ghosts: ghosts.map((g) => ({
       run_id: g.run_id,
       user_id: g.user_id,
+      is_self: g.user_id === claims.sub,
       display_name: g.display_name,
       avatar: g.avatar || null,
       guild_avatar: g.guild_avatar || null,

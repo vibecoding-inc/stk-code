@@ -225,6 +225,8 @@ void WasmTimeTrialBridge::parsePreparedJson(const std::string& json)
     std::vector<std::string> ghosts;
     std::vector<std::string> ghost_names;
     std::vector<std::string> ghost_avatars;
+    extractJsonString(json, "self_name", m_self_name);
+    extractJsonString(json, "self_avatar", m_self_avatar);
     extractJsonStringArray(json, "ghost_files", ghosts);
     extractJsonStringArray(json, "ghost_names", ghost_names);
     extractJsonStringArray(json, "ghost_avatars", ghost_avatars);
@@ -451,6 +453,8 @@ void WasmTimeTrialBridge::onGhostsReady(uint32_t req_id, int http_status,
 
     if (http_status == 200 && !json.empty())
     {
+        extractJsonString(json, "self_name", m_self_name);
+        extractJsonString(json, "self_avatar", m_self_avatar);
         std::vector<std::string> ghosts;
         if (extractJsonStringArray(json, "ghost_files", ghosts))
         {

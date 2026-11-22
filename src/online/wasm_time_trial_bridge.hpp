@@ -43,6 +43,8 @@ private:
     int                      m_difficulty;
     int                      m_laps;
     bool                     m_reverse;
+    std::string              m_self_name;
+    std::string              m_self_avatar;
     std::vector<std::string> m_ghost_files;
     std::vector<std::string> m_ghost_names;
     std::vector<std::string> m_ghost_avatars;
@@ -67,6 +69,8 @@ public:
 
     const std::string& getChallengeId() const { return m_challenge_id; }
     const std::string& getTrack() const { return m_track; }
+    const std::string& getSelfName() const { return m_self_name; }
+    const std::string& getSelfAvatarPath() const { return m_self_avatar; }
     int getDifficulty() const { return m_difficulty; }
     int getLaps() const { return m_laps; }
     bool getReverse() const { return m_reverse; }

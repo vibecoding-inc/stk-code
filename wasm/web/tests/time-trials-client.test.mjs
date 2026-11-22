@@ -71,9 +71,10 @@ test("fetchChallengeAndGhosts downloads ghosts into MEMFS and exposes prepared J
       return new Response(
         JSON.stringify({
           challenge: {challenge_id: "ch1", track: "abyss", difficulty: 2, laps: 3, reverse: false},
+          me: {user_id: "u1", display_name: "SpeedDemon", avatar: "av1", guild_avatar: "gav1", guild_id: "g1"},
           total_players: 1,
-          leaderboard: [{rank: 1, run_id: "r1", display_name: "Alice", kart: "tux", time_ms: 84000}],
-          ghosts: [{run_id: "r1", url: "/api/timetrials/runs/r1/replay"}],
+          leaderboard: [{rank: 1, run_id: "r1", display_name: "SpeedDemon", kart: "tux", time_ms: 84000}],
+          ghosts: [{run_id: "r1", user_id: "u1", is_self: true, display_name: "SpeedDemon", url: "/api/timetrials/runs/r1/replay"}],
         }),
         {status: 200}
       );
@@ -94,6 +95,8 @@ test("fetchChallengeAndGhosts downloads ghosts into MEMFS and exposes prepared J
 
   let result = await bridge.fetchChallengeAndGhosts("ch1");
   assert.deepEqual(result.ghost_files, ["/tmp/tt_ghosts/r1.replay"]);
+  assert.deepEqual(result.ghost_names, ["SpeedDemon (PB)"]);
+  assert.equal(result.self_name, "SpeedDemon");
   assert.ok(fs._files.has("/tmp/tt_ghosts/r1.replay"));
   assert.equal(JSON.parse(bridge.getPreparedChallengeJson()).challenge.track, "abyss");
 });

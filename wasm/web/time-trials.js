@@ -120,62 +120,82 @@ export function create_time_trials_bridge({
     let ghost_files = [];
     let ghost_names = [];
     let ghost_avatars = [];
+    let me = data.me || null;
+    let self_name = (me && me.display_name) || "";
+    let self_avatar = "";
     if (fs) {
       ensure_dir(fs, GHOST_DIR);
       clear_dir(fs, GHOST_DIR);
 
-      let downloaded = await Promise.all(
-        ghosts.map(async (g) => {
-          try {
-            let replay_promise = fetch_impl(g.url, {
-              headers: {Authorization: `Bearer ${token}`},
-            });
-            let avatar_promise = avatar_cache && typeof avatar_cache.ensureAvatar === "function"
-              ? avatar_cache.ensureAvatar({
-                  user_id: g.user_id,
-                  avatar: g.avatar || null,
-                  guild_id: g.guild_id || null,
-                  guild_avatar: g.guild_avatar || null,
-                })
-              : Promise.resolve(null);
+      let self_avatar_promise =
+        me && me.user_id && avatar_cache && typeof avatar_cache.ensureAvatar === "function"
+          ? avatar_cache.ensureAvatar({
+              user_id: me.user_id,
+              avatar: me.avatar || null,
+              guild_id: me.guild_id || null,
+              guild_avatar: me.guild_avatar || null,
+            })
+          : Promise.resolve(null);
 
-            let [r, avatar_path] = await Promise.all([replay_promise, avatar_promise]);
-            if (!r.ok) {
-              logger.warn(`Failed to download ghost ${g.run_id} (${r.status})`);
-              on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: `http_${r.status}`});
+      let [resolved_self_avatar, downloaded] = await Promise.all([
+        self_avatar_promise,
+        Promise.all(
+          ghosts.map(async (g) => {
+            try {
+              let replay_promise = fetch_impl(g.url, {
+                headers: {Authorization: `Bearer ${token}`},
+              });
+              let avatar_promise = avatar_cache && typeof avatar_cache.ensureAvatar === "function"
+                ? avatar_cache.ensureAvatar({
+                    user_id: g.user_id,
+                    avatar: g.avatar || null,
+                    guild_id: g.guild_id || null,
+                    guild_avatar: g.guild_avatar || null,
+                  })
+                : Promise.resolve(null);
+
+              let [r, avatar_path] = await Promise.all([replay_promise, avatar_promise]);
+              if (!r.ok) {
+                logger.warn(`Failed to download ghost ${g.run_id} (${r.status})`);
+                on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: `http_${r.status}`});
+                return null;
+              }
+              let raw_bytes = new Uint8Array(await r.arrayBuffer());
+              if (raw_bytes.length === 0) {
+                on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: "empty_body"});
+                return null;
+              }
+              let bytes = maybe_ungzip(raw_bytes);
+              // Sanity check header ("version:") so corrupt/encoded blobs are logged clearly.
+              let header_preview = new TextDecoder().decode(bytes.subarray(0, 16));
+              if (!header_preview.startsWith("version:")) {
+                logger.warn(`Ghost ${g.run_id} has unexpected header: ${JSON.stringify(header_preview)}`);
+                on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: "bad_header"});
+                return null;
+              }
+              let path = `${GHOST_DIR}/${g.run_id}.replay`;
+              fs.writeFile(path, bytes);
+              let is_self = Boolean(g.is_self || (me && me.user_id && g.user_id === me.user_id));
+              let base_name = g.display_name || "";
+              let label = is_self && base_name ? `${base_name} (PB)` : base_name;
+              return {
+                path,
+                name: label,
+                avatar: avatar_path || "",
+              };
+            }
+            catch (err) {
+              logger.warn(`Ghost download error for ${g.run_id}:`, err);
+              on_lifecycle("time_trial_ghost_load_failed", {
+                run_id: g.run_id,
+                reason: err && err.message ? err.message : String(err),
+              });
               return null;
             }
-            let raw_bytes = new Uint8Array(await r.arrayBuffer());
-            if (raw_bytes.length === 0) {
-              on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: "empty_body"});
-              return null;
-            }
-            let bytes = maybe_ungzip(raw_bytes);
-            // Sanity check header ("version:") so corrupt/encoded blobs are logged clearly.
-            let header_preview = new TextDecoder().decode(bytes.subarray(0, 16));
-            if (!header_preview.startsWith("version:")) {
-              logger.warn(`Ghost ${g.run_id} has unexpected header: ${JSON.stringify(header_preview)}`);
-              on_lifecycle("time_trial_ghost_load_failed", {run_id: g.run_id, reason: "bad_header"});
-              return null;
-            }
-            let path = `${GHOST_DIR}/${g.run_id}.replay`;
-            fs.writeFile(path, bytes);
-            return {
-              path,
-              name: g.display_name || "",
-              avatar: avatar_path || "",
-            };
-          }
-          catch (err) {
-            logger.warn(`Ghost download error for ${g.run_id}:`, err);
-            on_lifecycle("time_trial_ghost_load_failed", {
-              run_id: g.run_id,
-              reason: err && err.message ? err.message : String(err),
-            });
-            return null;
-          }
-        })
-      );
+          })
+        ),
+      ]);
+      self_avatar = resolved_self_avatar || "";
       for (let item of downloaded) {
         if (!item) continue;
         ghost_files.push(item.path);
@@ -188,6 +208,8 @@ export function create_time_trials_bridge({
       challenge: data.challenge,
       total_players: data.total_players || 0,
       leaderboard: data.leaderboard || [],
+      self_name,
+      self_avatar,
       ghost_files,
       ghost_names,
       ghost_avatars,

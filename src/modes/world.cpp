@@ -60,6 +60,7 @@
 #include "network/network_config.hpp"
 #include "network/rewind_manager.hpp"
 #include "network/stk_host.hpp"
+#include "online/wasm_time_trial_bridge.hpp"
 #include "physics/btKart.hpp"
 #include "physics/physics.hpp"
 #include "physics/triangle_mesh.hpp"
@@ -563,6 +564,17 @@ std::shared_ptr<AbstractKart> World::createKart
         }
         DiscordAvatarManager::get()->bindKartByUsername(
             new_kart.get(), online_name, !controller->isLocalPlayerController());
+    }
+    else if (controller->isLocalPlayerController() &&
+             WasmTimeTrialBridge::get()->isChallengeMode())
+    {
+        const std::string& self_name = WasmTimeTrialBridge::get()->getSelfName();
+        const std::string& self_avatar = WasmTimeTrialBridge::get()->getSelfAvatarPath();
+        if (!self_name.empty() || !self_avatar.empty())
+        {
+            DiscordAvatarManager::get()->bindKart(
+                new_kart->getWorldKartId(), self_name, self_avatar);
+        }
     }
     new_kart->setController(controller);
     RaceManager::get()->setKartColor(index, ri->getHue());

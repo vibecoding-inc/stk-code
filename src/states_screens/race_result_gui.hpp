@@ -105,6 +105,8 @@ private:
         float            m_current_displayed_points;
         /** The kart icons. */
         video::ITexture *m_kart_icon;
+        /** Optional circular Discord avatar icon drawn next to the kart icon. */
+        video::ITexture *m_avatar_icon;
         /** The times of all karts in the right order. */
         core::stringw    m_finish_time_string;
         /** The kart color */
@@ -145,6 +147,9 @@ private:
 
     /** The size of the kart icons. */
     unsigned int               m_width_icon;
+
+    /** True if any row has a circular Discord avatar to draw beside the kart icon. */
+    bool                       m_has_any_avatar;
 
     /** Width of the kart name column. */
     unsigned int               m_width_kart_name;
