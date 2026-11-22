@@ -171,6 +171,21 @@ jobs:
           path: wasm/web
           if-no-files-found: error
 
+      - name: Apply D1 database migrations
+        if: >-
+          github.event_name != 'pull_request' &&
+          env.CLOUDFLARE_API_TOKEN != '' &&
+          env.CLOUDFLARE_ACCOUNT_ID != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: wasm
+          command: d1 migrations apply stk-time-trials --remote
+
       - name: Deploy to Cloudflare Workers
         if: >-
           github.event_name != 'pull_request' &&
