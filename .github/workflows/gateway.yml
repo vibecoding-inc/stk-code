@@ -5,19 +5,31 @@ on:
     branches: [wasm]
     paths:
       - 'wasm/gateway/**'
-      - 'src/network/**'
-      - 'lib/enet/**'
+      - 'src/**'
+      - 'lib/**'
+      - 'cmake/**'
       - 'CMakeLists.txt'
       - 'sources.cmake'
+      - 'data/**'
+      - '!data/gui/**'
+      - '!data/shaders/**'
+      - '!data/po/**'
+      - '!data/ttf/**'
       - '.github/workflows/gateway.yml'
   pull_request:
     branches: [wasm]
     paths:
       - 'wasm/gateway/**'
-      - 'src/network/**'
-      - 'lib/enet/**'
+      - 'src/**'
+      - 'lib/**'
+      - 'cmake/**'
       - 'CMakeLists.txt'
       - 'sources.cmake'
+      - 'data/**'
+      - '!data/gui/**'
+      - '!data/shaders/**'
+      - '!data/po/**'
+      - '!data/ttf/**'
       - '.github/workflows/gateway.yml'
   workflow_dispatch:
 
