@@ -446,6 +446,38 @@ async function get_data_version() {
   return data_version;
 }
 
+async function apply_gui_overlay(url, fs_path) {
+  let response = await fetch(url, { cache: "no-cache" });
+  if (response.status === 404) {
+    return;
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to fetch GUI overlay (${response.status})`);
+  }
+  let compressed = new Uint8Array(await response.arrayBuffer());
+  let decompressed = pako.inflate(compressed);
+  let files = await jsUntar(decompressed.buffer);
+  let written = 0;
+  for (let file of files) {
+    let relative_path = file.name.startsWith("./")
+      ? file.name.substring(1)
+      : (file.name.startsWith("/") ? file.name : "/" + file.name);
+    let out_path = fs_path + relative_path;
+    if (out_path.endsWith("/")) {
+      try {
+        FS.mkdir(out_path.replace(/\/+$/, ""));
+      }
+      catch {}
+    }
+    else {
+      FS.writeFile(out_path, new Uint8Array(file.buffer));
+      file.buffer = null;
+      written++;
+    }
+  }
+  log_lifecycle("gui_overlay_applied", {url, file_count: written});
+}
+
 async function load_data() {
   //check if we need to update the assets bundle
   let version = await get_data_version();
@@ -457,6 +489,7 @@ async function load_data() {
   let quality = selected_quality;
   let data_url = `/game/data_${quality}.tar.gz`;
   await extract_tar(data_url, "/data", true);
+  await apply_gui_overlay("/game/data_gui.tar.gz", "/data");
 }
 
 async function load_idbfs() {

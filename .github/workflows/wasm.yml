@@ -67,6 +67,9 @@ jobs:
       # is one of the slowest steps. Cache the resulting bundles keyed on the
       # assets revision and the packing scripts; on a hit, pipeline.sh skips
       # packing (SKIP_PACK_IF_PRESENT below).
+      # Note: data/gui/screens and data/gui/dialogs are packed separately into a
+      # ~26 KB overlay (wasm/pack_gui_overlay.sh) so .stkgui edits never bust
+      # this cache or players' IndexedDB caches.
       - name: Cache packed assets
         id: packed_assets
         if: steps.assets.outputs.rev != 'unknown'
@@ -77,7 +80,7 @@ jobs:
             wasm/web/game/data_mid.tar.gz.*
             wasm/web/game/data_high.tar.gz.*
             wasm/web/game/data_version.txt
-          key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh', 'data/gui/**', 'wasm/docker/Dockerfile') }}
+          key: wasm-assets-${{ steps.assets.outputs.rev }}-${{ hashFiles('wasm/pack_assets.sh', 'android/generate_assets.sh', 'data/optimize_data.sh', 'data/gui/icons/**', 'wasm/docker/Dockerfile') }}
 
       # Only build/run the Emscripten Docker image when either the WASM binary
       # or the packed assets missed cache. Pure web/worker changes skip Docker
@@ -149,6 +152,9 @@ jobs:
             -e SKIP_BUILD_IF_PRESENT=1 \
             -e SKIP_PACK_IF_PRESENT=1 \
             "$IMAGE" wasm/docker/pipeline.sh
+
+      - name: Pack GUI overlay
+        run: bash wasm/pack_gui_overlay.sh
 
       - name: Ensure runtime config.json
         run: |

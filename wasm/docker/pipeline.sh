@@ -89,3 +89,7 @@ if [ -n "${STK_ASSETS_DIR:-}" ]; then
         "$WASM_DIR/pack_assets.sh" "$STK_ASSETS_DIR"
     fi
 fi
+
+# 5. Always pack the tiny GUI XML overlay (~26 KB) so local and CI builds pick
+#    up .stkgui edits without repacking the heavy art asset bundles.
+"$WASM_DIR/pack_gui_overlay.sh"
