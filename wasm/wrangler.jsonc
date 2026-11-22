@@ -58,13 +58,13 @@
   // Uncomment after creating the VPC Service in Workers & Pages -> Workers VPC
   // (pointing at host `podium-renderer`, HTTP port `3000`) and replace
   // <YOUR_VPC_SERVICE_ID> with the generated UUID.
-  // "vpc_services": [
-  //   {
-  //     "binding": "PODIUM_RENDERER",
-  //     "service_id": "<YOUR_VPC_SERVICE_ID>",
-  //     "remote": true
-  //   }
-  // ],
+  "vpc_services": [
+    {
+      "binding": "PODIUM_RENDERER",
+      "service_id": "01a2041a-206a-72c1-a1c4-1bc1b954b0e6",
+      "remote": true
+    }
+  ],
 
   // Workers observability: keep invocation logs and traces persisted so runs
   // can be inspected in the Cloudflare dashboard. Enabling this also persists
