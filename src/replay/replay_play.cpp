@@ -326,82 +326,92 @@ void ReplayPlay::load()
 {
     m_ghost_karts.clear();
 
+    if (!m_active_replay_files.empty())
+    {
+        for (unsigned int idx : m_active_replay_files)
+        {
+            if (idx < m_replay_file_list.size())
+                loadFileByIndex(idx);
+        }
+        return;
+    }
+
     if (m_second_replay_enabled)
         loadFile(/* second replay */ true);
 
     // Always load the first replay
     loadFile(/* second replay */ false);
-    
+
 } // load
 
 //-----------------------------------------------------------------------------
 void ReplayPlay::loadFile(bool second_replay)
 {
+    unsigned int replay_index = second_replay ? m_second_replay_file : m_current_replay_file;
+    loadFileByIndex(replay_index);
+}   // loadFile
+
+//-----------------------------------------------------------------------------
+void ReplayPlay::loadFileByIndex(unsigned int replay_index)
+{
     char s[1024];
+    ReplayData &rd = m_replay_file_list.at(replay_index);
 
-    int replay_index = second_replay ? m_second_replay_file : m_current_replay_file;
-    int replay_file_number = second_replay ? 2 : 1;
-
-    FILE *fd = openReplayFile(/*writeable*/false,
-            m_replay_file_list.at(replay_index).m_custom_replay_file, replay_file_number);
+    const std::string full_path = rd.m_custom_replay_file
+        ? rd.m_filename
+        : file_manager->getReplayDir() + rd.m_filename;
+    FILE *fd = FileUtils::fopenU8Path(full_path, "r");
 
     if(!fd)
     {
-        Log::error("Replay", "Can't read '%s', ghost replay disabled.",
-                    getReplayFilename(replay_file_number).c_str());
-        destroy();
+        Log::error("Replay", "Can't read '%s', skipping ghost replay.",
+                    full_path.c_str());
         return;
     }
 
-    Log::info("Replay", "Reading replay file '%s'.",
-                    getReplayFilename(replay_file_number).c_str());
+    Log::info("Replay", "Reading replay file '%s'.", full_path.c_str());
 
-    ReplayData &rd = m_replay_file_list[replay_index];
-    unsigned int num_kart = (unsigned int)m_replay_file_list.at(replay_index)
-                                                            .m_kart_list.size();
+    unsigned int num_kart = (unsigned int)rd.m_kart_list.size();
     unsigned int lines_to_skip = (rd.m_replay_version == 3) ? 7 : 10;
     lines_to_skip += (rd.m_replay_version == 3) ? num_kart : 2*num_kart;
 
     for (unsigned int i = 0; i < lines_to_skip; i++)
         fgets(s, 1023, fd);
 
+    unsigned int kart_index_in_file = 0;
     // eof actually doesn't trigger here, since it requires first to try
     // reading behind eof, but still it's clearer this way.
     while(!feof(fd))
     {
         if(fgets(s, 1023, fd)==NULL)  // eof reached
             break;
-        readKartData(fd, s, second_replay);
+        if (kart_index_in_file >= num_kart)
+            break;
+        readKartData(fd, s, replay_index, kart_index_in_file);
+        kart_index_in_file++;
     }
 
     fclose(fd);
-}   // loadFile
+}   // loadFileByIndex
 
 //-----------------------------------------------------------------------------
 /** Reads all data from a replay file for a specific kart.
  *  \param fd The file descriptor from which to read.
  */
-void ReplayPlay::readKartData(FILE *fd, char *next_line, bool second_replay)
+void ReplayPlay::readKartData(FILE *fd, char *next_line, unsigned int replay_index,
+                              unsigned int kart_index_in_file)
 {
     char s[1024];
 
-    int replay_index = second_replay ? m_second_replay_file
-                                     : m_current_replay_file;
-
     const unsigned int kart_num = (unsigned int)m_ghost_karts.size();
-    unsigned int first_loaded_f_num = 0;
-
-    if (!second_replay && m_second_replay_enabled)
-        first_loaded_f_num = (unsigned int)m_replay_file_list.at(m_second_replay_file)
-                                                             .m_kart_list.size();
 
     ReplayData &rd = m_replay_file_list[replay_index];
     m_ghost_karts.push_back(std::make_shared<GhostKart>
-        (rd.m_kart_list.at(kart_num-first_loaded_f_num), kart_num, kart_num + 1,
-        rd.m_kart_color.at(kart_num-first_loaded_f_num), rd));
+        (rd.m_kart_list.at(kart_index_in_file), kart_num, kart_num + 1,
+        rd.m_kart_color.at(kart_index_in_file), rd));
     m_ghost_karts[kart_num]->init(RaceManager::KT_GHOST);
     Controller* controller = new GhostController(getGhostKart(kart_num).get(),
-                                                 rd.m_name_list[kart_num-first_loaded_f_num]);
+                                                 rd.m_name_list[kart_index_in_file]);
     getGhostKart(kart_num)->setController(controller);
 
     unsigned int size;

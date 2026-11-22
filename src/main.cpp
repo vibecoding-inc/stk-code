@@ -274,7 +274,9 @@ extern "C" {
 #include "race/race_manager.hpp"
 #include "replay/replay_play.hpp"
 #include "replay/replay_recorder.hpp"
+#include "online/wasm_time_trial_bridge.hpp"
 #include "states_screens/main_menu_screen.hpp"
+#include "states_screens/offline_kart_selection.hpp"
 #include "states_screens/online/networking_lobby.hpp"
 #include "states_screens/online/register_screen.hpp"
 #include "states_screens/state_manager.hpp"
@@ -2529,10 +2531,24 @@ int main(int argc, char *argv[])
         }
 #endif
 
+        WasmTimeTrialBridge::get()->initFromJS();
+
         if (STKHost::existHost())
         {
             if (!GUIEngine::isNoGraphics())
                 NetworkingLobby::getInstance()->push();
+        }
+        else if (WasmTimeTrialBridge::get()->isChallengeMode())
+        {
+            if (UserConfigParams::m_enforce_current_player)
+            {
+                PlayerManager::get()->enforceCurrentPlayer();
+            }
+            NetworkConfig::get()->unsetNetworking();
+            KartSelectionScreen* s = OfflineKartSelectionScreen::getInstance();
+            s->setMultiplayer(false);
+            s->setFromOverworld(false);
+            s->push();
         }
         else if (!UserConfigParams::m_no_start_screen)
         {

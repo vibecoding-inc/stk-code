@@ -44,11 +44,13 @@ function clear_dir(fs, dir) {
 }
 
 function invoke_cpp_json_callback(module, heap_u8, fn_name, req_id, http_status, payload_obj) {
-  if (!module || typeof module[fn_name] !== "function" || typeof module._malloc !== "function") {
+  let alloc = module && (module._stk_tt_alloc || module._malloc);
+  let free = module && (module._stk_tt_free || module._free);
+  if (!module || typeof module[fn_name] !== "function" || typeof alloc !== "function") {
     return false;
   }
   let json_bytes = text_encoder.encode(JSON.stringify(payload_obj || {}));
-  let ptr = module._malloc(json_bytes.length + 1);
+  let ptr = alloc(json_bytes.length + 1);
   if (!ptr) return false;
   try {
     let heap = typeof heap_u8 === "function" ? heap_u8() : heap_u8;
@@ -58,8 +60,8 @@ function invoke_cpp_json_callback(module, heap_u8, fn_name, req_id, http_status,
     return true;
   }
   finally {
-    if (typeof module._free === "function") {
-      module._free(ptr);
+    if (typeof free === "function") {
+      free(ptr);
     }
   }
 }

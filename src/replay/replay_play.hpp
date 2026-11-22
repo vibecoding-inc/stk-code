@@ -117,6 +117,11 @@ private:
 
     bool                     m_second_replay_enabled;
 
+    /** Optional list of N replay file indices to load simultaneously (used by
+     *  Discord Activity Time Trials). When empty, falls back to the legacy
+     *  1-or-2 replay file fields above. */
+    std::vector<unsigned int> m_active_replay_files;
+
     std::vector<ReplayData>  m_replay_file_list;
 
     /** All ghost karts. */
@@ -124,12 +129,30 @@ private:
 
           ReplayPlay();
          ~ReplayPlay();
-    void  readKartData(FILE *fd, char *next_line, bool second_replay);
+    void  readKartData(FILE *fd, char *next_line, unsigned int replay_index,
+                       unsigned int kart_index_in_file);
+    void  loadFileByIndex(unsigned int replay_index);
 public:
     void  reset();
     void  load();
     void  loadFile(bool second_replay);
     void  loadAllReplayFile();
+    void  clearReplayFileList()
+    {
+        m_replay_file_list.clear();
+        m_active_replay_files.clear();
+        m_current_replay_file = 0;
+        m_second_replay_file = 0;
+        m_second_replay_enabled = false;
+    }
+    void  setActiveReplayFiles(const std::vector<unsigned int>& indices)
+    {
+        m_active_replay_files = indices;
+    }
+    void  clearActiveReplayFiles()
+    {
+        m_active_replay_files.clear();
+    }
     // ------------------------------------------------------------------------
     static void        setSortOrder(SortOrder so)       { m_sort_order = so; }
     // ------------------------------------------------------------------------
@@ -171,6 +194,16 @@ public:
     // ------------------------------------------------------------------------
     const unsigned int getNumGhostKart() const
     {
+        if (!m_active_replay_files.empty())
+        {
+            unsigned int total = 0;
+            for (unsigned int idx : m_active_replay_files)
+            {
+                if (idx < m_replay_file_list.size())
+                    total += (unsigned int)m_replay_file_list.at(idx).m_kart_list.size();
+            }
+            return total;
+        }
         assert(m_replay_file_list.size() > 0);
         unsigned int num =
             (unsigned int)m_replay_file_list.at(m_current_replay_file)
@@ -186,6 +219,20 @@ public:
     // ------------------------------------------------------------------------
     const std::string& getGhostKartName(unsigned int n) const
     {
+        if (!m_active_replay_files.empty())
+        {
+            unsigned int offset = n;
+            for (unsigned int idx : m_active_replay_files)
+            {
+                if (idx >= m_replay_file_list.size()) continue;
+                const auto& kl = m_replay_file_list.at(idx).m_kart_list;
+                if (offset < kl.size())
+                    return kl.at(offset);
+                offset -= (unsigned int)kl.size();
+            }
+            // Fallback to first available kart name if out of range
+            return m_replay_file_list.at(m_active_replay_files.front()).m_kart_list.at(0);
+        }
         assert(m_replay_file_list.size() > 0);
 
         unsigned int fkn =

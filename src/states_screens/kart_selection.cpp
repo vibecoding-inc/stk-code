@@ -16,6 +16,7 @@
 //  along with this program; if not, write to the Free Software
 //  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
+#include "online/wasm_time_trial_bridge.hpp"
 #include "states_screens/kart_selection.hpp"
 
 #include "audio/sfx_manager.hpp"
@@ -1271,6 +1272,10 @@ void KartSelectionScreen::setMultiplayer(bool multiplayer)
 
 bool KartSelectionScreen::onEscapePressed()
 {
+    if (WasmTimeTrialBridge::get()->isChallengeMode())
+    {
+        return false;
+    }
     m_go_to_overworld_next = false; // valid once
     m_must_delete_on_back = true; // delete the screen
     if (m_from_overworld)
@@ -1413,7 +1418,11 @@ void KartSelectionScreen::allPlayersDone()
     input_manager->getDeviceManager()->setSinglePlayer(ap);
 
     // ---- Go to next screen or return to overworld
-    if (m_from_overworld || m_go_to_overworld_next)
+    if (WasmTimeTrialBridge::get()->isChallengeMode())
+    {
+        WasmTimeTrialBridge::get()->startChallengeRace();
+    }
+    else if (m_from_overworld || m_go_to_overworld_next)
     {
         m_from_overworld = false; // valid once
         m_go_to_overworld_next = false;

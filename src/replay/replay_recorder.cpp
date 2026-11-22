@@ -17,6 +17,7 @@
 //  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "replay/replay_recorder.hpp"
+#include "online/wasm_time_trial_bridge.hpp"
 
 #include "config/stk_config.hpp"
 #include "io/file_manager.hpp"
@@ -477,6 +478,35 @@ void ReplayRecorder::save()
         }   // for i
     }
     fclose(fd);
+
+    if (WasmTimeTrialBridge::get()->isChallengeMode())
+    {
+        std::string player_kart;
+        float player_kart_color = 0.0f;
+        for (unsigned int k = 0; k < num_karts; k++)
+        {
+            const AbstractKart *kart = world->getKart(k);
+            if (kart->isGhostKart()) continue;
+            player_kart = kart->getIdent();
+            if (kart->getController()->isPlayerController() &&
+                StateManager::get()->getActivePlayer(0) &&
+                StateManager::get()->getActivePlayer(0)->getConstProfile())
+            {
+                player_kart_color = StateManager::get()->getActivePlayer(0)
+                    ->getConstProfile()->getDefaultKartColor();
+            }
+            break;
+        }
+        if (!player_kart.empty())
+        {
+            WasmTimeTrialBridge::get()->submitCompletedRun(
+                file_manager->getReplayDir() + getReplayFilename(),
+                player_kart,
+                player_kart_color,
+                min_time,
+                (int)getCurrentReplayVersion());
+        }
+    }
 }   // save
 
 /* Returns an encoding value for a given attachment type.

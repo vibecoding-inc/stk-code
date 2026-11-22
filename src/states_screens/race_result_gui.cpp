@@ -61,7 +61,9 @@
 #include "scriptengine/property_animator.hpp"
 #include "states_screens/cutscene_general.hpp"
 #include "states_screens/feature_unlocked.hpp"
+#include "online/wasm_time_trial_bridge.hpp"
 #include "states_screens/main_menu_screen.hpp"
+#include "states_screens/offline_kart_selection.hpp"
 #include "states_screens/online/networking_lobby.hpp"
 #include "states_screens/options/options_screen_video.hpp"
 #include "states_screens/race_setup_screen.hpp"
@@ -284,6 +286,26 @@ void RaceResultGUI::enableAllButtons()
         left->setImage("gui/icons/back.png");
         left->setVisible(true);
         return;        
+    }
+
+    // Discord Activity Time Trial challenge mode:
+    // Retry (refreshes latest ghosts), Change Kart, Share — no Quit button.
+    if (WasmTimeTrialBridge::get()->isChallengeMode())
+    {
+        right->setLabel(_("Restart"));
+        right->setImage("gui/icons/restart.png");
+        right->setVisible(true);
+        operations->select("right", PLAYER_ID_GAME_MASTER);
+
+        middle->setLabel(_("Change Kart"));
+        middle->setImage("gui/icons/main_race.png");
+        middle->setVisible(true);
+
+        left->setVisible(false);
+        left->setFocusable(false);
+
+        updateShareButton();
+        return;
     }
 
     // If we're in a network world, change the buttons text
@@ -514,6 +536,26 @@ void RaceResultGUI::eventCallback(GUIEngine::Widget* widget,
         if (action == "share")
         {
             triggerShareScoreboard();
+            return;
+        }
+
+        // Discord Activity Time Trial challenge mode
+        if (WasmTimeTrialBridge::get()->isChallengeMode())
+        {
+            if (action == "right")
+            {
+                WasmTimeTrialBridge::get()->refreshGhostsAndRestart();
+            }
+            else if (action == "middle")
+            {
+                StateManager::get()->popMenu();
+                RaceManager::get()->exitRace();
+                RaceManager::get()->setAIKartOverride("");
+                KartSelectionScreen* s = OfflineKartSelectionScreen::getInstance();
+                s->setMultiplayer(false);
+                s->setFromOverworld(false);
+                StateManager::get()->resetAndGoToScreen(s);
+            }
             return;
         }
 
