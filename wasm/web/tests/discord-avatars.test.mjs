@@ -95,9 +95,9 @@ test("create_participant_avatar_sync syncs connected participants and live updat
       return p;
     },
     _stk_tt_free() {},
-    _stk_discord_register_participant(u_ptr, d_ptr, a_ptr) {
+    _stk_discord_register_user(id_ptr, d_ptr, a_ptr) {
       registered.push({
-        username: read_cstr(u_ptr),
+        user_id: read_cstr(id_ptr),
         display_name: read_cstr(d_ptr),
         avatar_path: read_cstr(a_ptr),
       });
@@ -144,7 +144,7 @@ test("create_participant_avatar_sync syncs connected participants and live updat
   // Once C++ boots and invokes flushToWasm(), buffered participants are pushed.
   sync.flushToWasm();
   assert.equal(registered.length, 1);
-  assert.equal(registered[0].username, "alice");
+  assert.equal(registered[0].user_id, "111");
   assert.equal(registered[0].display_name, "Alice!");
   assert.equal(registered[0].avatar_path, "/tmp/discord_avatars/111.png");
 
@@ -156,5 +156,5 @@ test("create_participant_avatar_sync syncs connected participants and live updat
     ],
   });
   await new Promise((r) => setTimeout(r, 20));
-  assert.ok(registered.some((r) => r.username === "bob" && r.display_name === "Bobby"));
+  assert.ok(registered.some((r) => r.user_id === "222" && r.display_name === "Bobby"));
 });

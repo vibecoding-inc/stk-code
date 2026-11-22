@@ -269,11 +269,11 @@ export function create_discord_avatar_cache({
 
 const text_encoder = new TextEncoder();
 
-function push_participant_to_cpp(module, get_heap_u8, {username, display_name, avatar_path}) {
+function push_user_to_cpp(module, get_heap_u8, {user_id, display_name, avatar_path}) {
   if (
     !module ||
     module.ABORT ||
-    typeof module._stk_discord_register_participant !== "function"
+    typeof module._stk_discord_register_user !== "function"
   ) {
     return false;
   }
@@ -281,16 +281,16 @@ function push_participant_to_cpp(module, get_heap_u8, {username, display_name, a
   let free = module._stk_tt_free || module._free;
   if (typeof alloc !== "function") return false;
 
-  let u_bytes = text_encoder.encode(String(username || ""));
+  let id_bytes = text_encoder.encode(String(user_id || ""));
   let d_bytes = text_encoder.encode(String(display_name || ""));
   let a_bytes = text_encoder.encode(String(avatar_path || ""));
 
-  let u_ptr = alloc(u_bytes.length + 1);
+  let id_ptr = alloc(id_bytes.length + 1);
   let d_ptr = alloc(d_bytes.length + 1);
   let a_ptr = alloc(a_bytes.length + 1);
-  if (!u_ptr || !d_ptr || !a_ptr) {
+  if (!id_ptr || !d_ptr || !a_ptr) {
     if (typeof free === "function") {
-      if (u_ptr) free(u_ptr);
+      if (id_ptr) free(id_ptr);
       if (d_ptr) free(d_ptr);
       if (a_ptr) free(a_ptr);
     }
@@ -299,18 +299,18 @@ function push_participant_to_cpp(module, get_heap_u8, {username, display_name, a
 
   try {
     let heap = typeof get_heap_u8 === "function" ? get_heap_u8() : get_heap_u8;
-    heap.set(u_bytes, u_ptr);
-    heap[u_ptr + u_bytes.length] = 0;
+    heap.set(id_bytes, id_ptr);
+    heap[id_ptr + id_bytes.length] = 0;
     heap.set(d_bytes, d_ptr);
     heap[d_ptr + d_bytes.length] = 0;
     heap.set(a_bytes, a_ptr);
     heap[a_ptr + a_bytes.length] = 0;
-    module._stk_discord_register_participant(u_ptr, d_ptr, a_ptr);
+    module._stk_discord_register_user(id_ptr, d_ptr, a_ptr);
     return true;
   }
   finally {
     if (typeof free === "function") {
-      free(u_ptr);
+      free(id_ptr);
       free(d_ptr);
       free(a_ptr);
     }
@@ -318,8 +318,8 @@ function push_participant_to_cpp(module, get_heap_u8, {username, display_name, a
 }
 
 /**
- * Keeps Discord Activity multiplayer participants' display names and circular
- * avatars synced into Emscripten MEMFS and C++'s DiscordAvatarManager.
+ * Keeps Discord Activity participants' display names and circular avatars synced
+ * into Emscripten MEMFS and C++'s DiscordAvatarManager (keyed by Discord user_id).
  *
  * Uses `discordSdk.commands.getInstanceConnectedParticipants()` for initial
  * state and subscribes to `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE` for live joins.
@@ -333,9 +333,10 @@ export function create_participant_avatar_sync({
   logger = console,
   on_lifecycle = () => {},
 } = {}) {
-  let entries_by_username = new Map();
+  let entries_by_id = new Map();
   let subscribed = false;
-  // Never call exported WASM functions (_stk_tt_alloc / _stk_discord_register_participant)
+  let initial_sync_promise = null;
+  // Never call exported WASM functions (_stk_tt_alloc / _stk_discord_register_user)
   // before C++'s main() invokes flushToWasm(); calling native functions while on the
   // pre-launch HTML screen triggers Emscripten's -sASSERTIONS=1 runtime-init abort.
   let wasm_ready = false;
@@ -345,19 +346,32 @@ export function create_participant_avatar_sync({
     let avatars_loaded = 0;
     await Promise.all(
       users.map(async (u) => {
-        if (!u || !u.id || !u.username) return;
-        let username = String(u.username);
-        let display_name = String(u.nickname || u.global_name || u.username);
+        if (!u || !u.id) return;
+        let user_id = String(u.id);
+        let prev = entries_by_id.get(user_id);
+
+        // Preserve guild nickname when auth_self (which only has global_name) runs.
+        let guild_nick = u.nickname
+          ? String(u.nickname)
+          : (source === "auth_self" && prev ? prev.guild_nick : null);
+        let global_name = u.global_name
+          ? String(u.global_name)
+          : (prev ? prev.global_name : null);
+        let username = u.username
+          ? String(u.username)
+          : (prev ? prev.username : "Player");
+        let display_name = guild_nick || global_name || username;
+
         let avatar_path = (await avatar_cache.ensureAvatar({
-          user_id: String(u.id),
+          user_id,
           avatar: u.avatar ? String(u.avatar) : null,
-        })) || "";
+        })) || (prev ? prev.avatar_path : "");
         if (avatar_path) avatars_loaded++;
 
-        let entry = {username, display_name, avatar_path};
-        entries_by_username.set(username.toLowerCase(), entry);
+        let entry = {user_id, username, global_name, guild_nick, display_name, avatar_path};
+        entries_by_id.set(user_id, entry);
         if (wasm_ready) {
-          push_participant_to_cpp(get_module(), get_heap_u8, entry);
+          push_user_to_cpp(get_module(), get_heap_u8, entry);
         }
       })
     );
@@ -370,65 +384,76 @@ export function create_participant_avatar_sync({
   }
 
   return {
-    async start() {
-      let auth = get_discord_auth();
-      if (auth && auth.user) {
-        await sync_users([auth.user], "auth_self");
-      }
+    start() {
+      initial_sync_promise = (async () => {
+        let auth = get_discord_auth();
+        if (auth && auth.user) {
+          await sync_users([auth.user], "auth_self");
+        }
 
-      let sdk = get_discord_sdk();
-      if (!sdk) return;
+        let sdk = get_discord_sdk();
+        if (!sdk) return;
 
-      if (sdk.commands && typeof sdk.commands.getInstanceConnectedParticipants === "function") {
-        try {
-          let res = await sdk.commands.getInstanceConnectedParticipants();
-          if (res && Array.isArray(res.participants)) {
-            await sync_users(res.participants, "initial_participants");
+        if (sdk.commands && typeof sdk.commands.getInstanceConnectedParticipants === "function") {
+          try {
+            let res = await sdk.commands.getInstanceConnectedParticipants();
+            if (res && Array.isArray(res.participants)) {
+              await sync_users(res.participants, "initial_participants");
+            }
+          }
+          catch (err) {
+            logger.warn("getInstanceConnectedParticipants failed:", err);
+            on_lifecycle("discord_participants_sync_failed", {
+              stage: "initial",
+              reason: err && err.message ? err.message : String(err),
+            });
           }
         }
-        catch (err) {
-          logger.warn("getInstanceConnectedParticipants failed:", err);
-          on_lifecycle("discord_participants_sync_failed", {
-            stage: "initial",
-            reason: err && err.message ? err.message : String(err),
-          });
-        }
-      }
 
-      if (!subscribed && typeof sdk.subscribe === "function") {
-        subscribed = true;
-        try {
-          sdk.subscribe("ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE", (evt) => {
-            if (evt && Array.isArray(evt.participants)) {
-              sync_users(evt.participants, "live_update").catch((err) => {
-                logger.warn("Participant avatar update failed:", err);
-              });
-            }
-          });
+        if (!subscribed && typeof sdk.subscribe === "function") {
+          subscribed = true;
+          try {
+            sdk.subscribe("ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE", (evt) => {
+              if (evt && Array.isArray(evt.participants)) {
+                sync_users(evt.participants, "live_update").catch((err) => {
+                  logger.warn("Participant avatar update failed:", err);
+                });
+              }
+            });
+          }
+          catch (err) {
+            subscribed = false;
+            logger.warn("Subscribe to ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE failed:", err);
+          }
         }
-        catch (err) {
-          subscribed = false;
-          logger.warn("Subscribe to ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE failed:", err);
-        }
-      }
+      })();
+      return initial_sync_promise;
+    },
+
+    async waitForInitialSync(timeout_ms = 1500) {
+      if (!initial_sync_promise) return;
+      await Promise.race([
+        initial_sync_promise.catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, timeout_ms)),
+      ]);
     },
 
     flushToWasm() {
       wasm_ready = true;
       let mod = get_module();
-      if (!mod || typeof mod._stk_discord_register_participant !== "function") {
-        logger.warn("flushToWasm skipped: _stk_discord_register_participant is not exported on Module.");
+      if (!mod || typeof mod._stk_discord_register_user !== "function") {
+        logger.warn("flushToWasm skipped: _stk_discord_register_user is not exported on Module.");
         return;
       }
       let pushed = 0;
-      for (let entry of entries_by_username.values()) {
-        if (push_participant_to_cpp(mod, get_heap_u8, entry)) pushed++;
+      for (let entry of entries_by_id.values()) {
+        if (push_user_to_cpp(mod, get_heap_u8, entry)) pushed++;
       }
       on_lifecycle("discord_participants_flushed", {count: pushed});
     },
 
     _getEntries() {
-      return entries_by_username;
+      return entries_by_id;
     },
   };
 }

@@ -780,6 +780,11 @@ async function start_game({connect_to_lobby = false, time_trial = null} = {}) {
       });
     }
 
+    if (globalThis.stkDiscordParticipants &&
+        typeof globalThis.stkDiscordParticipants.waitForInitialSync === "function") {
+      await globalThis.stkDiscordParticipants.waitForInitialSync(1500);
+    }
+
     await wait_for_frame();
     let launch_args = connect_to_lobby ? ["--connect-now=10.0.0.1:2759"] : [];
     log_lifecycle("engine_launch", {

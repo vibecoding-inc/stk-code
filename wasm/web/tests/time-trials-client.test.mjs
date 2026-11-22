@@ -95,7 +95,10 @@ test("fetchChallengeAndGhosts downloads ghosts into MEMFS and exposes prepared J
 
   let result = await bridge.fetchChallengeAndGhosts("ch1");
   assert.deepEqual(result.ghost_files, ["/tmp/tt_ghosts/r1.replay"]);
-  assert.deepEqual(result.ghost_names, ["SpeedDemon (PB)"]);
+  assert.deepEqual(result.ghost_user_ids, ["u1"]);
+  assert.deepEqual(result.ghost_names, ["SpeedDemon"]);
+  assert.deepEqual(result.ghost_is_self, ["1"]);
+  assert.equal(result.self_user_id, "u1");
   assert.equal(result.self_name, "SpeedDemon");
   assert.ok(fs._files.has("/tmp/tt_ghosts/r1.replay"));
   assert.equal(JSON.parse(bridge.getPreparedChallengeJson()).challenge.track, "abyss");

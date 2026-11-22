@@ -94,14 +94,14 @@ test("provision_discord_profile creates config directories and writes players.xm
 
   assert.deepEqual(result, {
     applied: true,
-    username: "karter_1",
+    username: "<@42>",
     config_dir: "/home/web_user/.config/supertuxkart/config-0.10",
   });
   assert.ok(dirs.has("/home/web_user/.config/supertuxkart/config-0.10"));
 
   let players_xml = files.get("/home/web_user/.config/supertuxkart/config-0.10/players.xml");
   assert.ok(players_xml);
-  assert.match(players_xml, /<current player="karter_1"\/>/);
+  assert.match(players_xml, /<current player="&#x3C;@42&#x3E;"\/>/);
   assert.doesNotMatch(players_xml, /Should Not Be Used/);
 
   let config_xml = files.get("/home/web_user/.config/supertuxkart/config-0.10/config.xml");

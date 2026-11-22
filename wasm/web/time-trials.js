@@ -118,9 +118,12 @@ export function create_time_trials_bridge({
 
     let fs = get_fs();
     let ghost_files = [];
+    let ghost_user_ids = [];
     let ghost_names = [];
     let ghost_avatars = [];
+    let ghost_is_self = [];
     let me = data.me || null;
+    let self_user_id = (me && me.user_id) || "";
     let self_name = (me && me.display_name) || "";
     let self_avatar = "";
     if (fs) {
@@ -176,12 +179,12 @@ export function create_time_trials_bridge({
               let path = `${GHOST_DIR}/${g.run_id}.replay`;
               fs.writeFile(path, bytes);
               let is_self = Boolean(g.is_self || (me && me.user_id && g.user_id === me.user_id));
-              let base_name = g.display_name || "";
-              let label = is_self && base_name ? `${base_name} (PB)` : base_name;
               return {
                 path,
-                name: label,
+                user_id: g.user_id ? String(g.user_id) : "",
+                name: g.display_name || "",
                 avatar: avatar_path || "",
+                is_self,
               };
             }
             catch (err) {
@@ -199,8 +202,10 @@ export function create_time_trials_bridge({
       for (let item of downloaded) {
         if (!item) continue;
         ghost_files.push(item.path);
+        ghost_user_ids.push(item.user_id);
         ghost_names.push(item.name);
         ghost_avatars.push(item.avatar);
+        ghost_is_self.push(item.is_self ? "1" : "0");
       }
     }
 
@@ -208,11 +213,14 @@ export function create_time_trials_bridge({
       challenge: data.challenge,
       total_players: data.total_players || 0,
       leaderboard: data.leaderboard || [],
+      self_user_id,
       self_name,
       self_avatar,
       ghost_files,
+      ghost_user_ids,
       ghost_names,
       ghost_avatars,
+      ghost_is_self,
     };
 
     on_lifecycle("time_trial_ghosts_loaded", {

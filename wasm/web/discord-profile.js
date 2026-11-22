@@ -5,6 +5,19 @@ export function get_discord_username(discord_auth) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function format_discord_mention(user_id) {
+  if (typeof user_id !== "string" && typeof user_id !== "number") return null;
+  let id = String(user_id).trim();
+  if (!/^\d+$/.test(id)) return null;
+  return `<@${id}>`;
+}
+
+export function get_discord_profile_name(discord_auth) {
+  let mention = format_discord_mention(discord_auth && discord_auth.user && discord_auth.user.id);
+  if (mention) return mention;
+  return get_discord_username(discord_auth);
+}
+
 // Encodes strings using the same &#xHEX; scheme as SuperTuxKart's
 // StringUtils::xmlEncode / StringUtils::xmlDecode.
 export function xml_encode_stk(value) {
@@ -93,15 +106,15 @@ function mkdir_p(fs, dir_path) {
 }
 
 export function provision_discord_profile({fs, discord_auth, env} = {}) {
-  let username = get_discord_username(discord_auth);
-  if (!username) {
+  let profile_name = get_discord_profile_name(discord_auth);
+  if (!profile_name) {
     return {applied: false, username: null, config_dir: null};
   }
 
   let config_dir = resolve_stk_config_dir(env);
   mkdir_p(fs, config_dir);
-  fs.writeFile(`${config_dir}/players.xml`, build_players_xml(username));
+  fs.writeFile(`${config_dir}/players.xml`, build_players_xml(profile_name));
   fs.writeFile(`${config_dir}/config.xml`, build_config_xml());
 
-  return {applied: true, username, config_dir};
+  return {applied: true, username: profile_name, config_dir};
 }
