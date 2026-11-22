@@ -26,6 +26,7 @@
 #include "config/player_manager.hpp"
 #include "font/font_manager.hpp"
 #include "graphics/discord_avatar_manager.hpp"
+#include "io/rich_presence.hpp"
 #include "graphics/irr_driver.hpp"
 #include "guiengine/CGUISpriteBank.hpp"
 #include "guiengine/emoji_keyboard.hpp"
@@ -238,6 +239,7 @@ void NetworkingLobby::init()
     m_chat_box->setActive(false);
     m_chat_box->setTextBoxType(TBT_CAP_SENTENCES);
     m_send_button->setVisible(false);
+    RichPresenceNS::RichPresence::get()->update(true);
     m_send_button->setActive(false);
     // Unicode enter arrow
     m_send_button->setText(L"\u21B2");
@@ -1085,6 +1087,7 @@ void NetworkingLobby::updatePlayers()
         if (id != -1)
             m_player_list->setSelectionID(id);
     }
+    RichPresenceNS::RichPresence::get()->update(true);
 }   // updatePlayers
 
 // ----------------------------------------------------------------------------

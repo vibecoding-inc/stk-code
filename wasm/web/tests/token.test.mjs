@@ -34,7 +34,10 @@ test("handleTokenExchange exchanges a Discord authorization code", {concurrency:
     });
 
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {access_token: "discord-access-token"});
+    assert.deepEqual(await response.json(), {
+      access_token: "discord-access-token",
+      public_origin: "https://example.com",
+    });
   }
   finally {
     globalThis.fetch = original_fetch;

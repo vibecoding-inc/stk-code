@@ -29,6 +29,7 @@
 #include "config/user_config.hpp"
 #include "graphics/2dutils.hpp"
 #include "graphics/discord_avatar_manager.hpp"
+#include "io/rich_presence.hpp"
 #include "graphics/irr_driver.hpp"
 #include "graphics/material.hpp"
 #include "guiengine/engine.hpp"
@@ -110,6 +111,7 @@ void RaceResultGUI::init()
 
     m_timer = 0;
     m_share_capture_pending = false;
+    RichPresenceNS::RichPresence::get()->update(true);
 
     getWidget("operations")->setActive(false);
     getWidget("left")->setVisible(false);

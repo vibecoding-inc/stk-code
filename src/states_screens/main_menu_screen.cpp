@@ -35,6 +35,7 @@
 #include "input/input_manager.hpp"
 #include "input/keyboard_device.hpp"
 #include "io/file_manager.hpp"
+#include "io/rich_presence.hpp"
 #include "karts/kart_properties_manager.hpp"
 #include "main_loop.hpp"
 #include "modes/cutscene_world.hpp"
@@ -162,6 +163,7 @@ void MainMenuScreen::init()
     // To avoid this, we will clean the last used device, making
     // the key bindings for the first player the default again.
     input_manager->getDeviceManager()->clearLatestUsedDevice();
+    RichPresenceNS::RichPresence::get()->update(true);
 
 #ifndef SERVER_ONLY
     if (addons_manager && addons_manager->isLoading())

@@ -79,6 +79,13 @@ export async function handleTokenExchange({request, env, fetch_impl = fetch}) {
   }
 
   let out = {access_token: result.access_token};
+  try {
+    let parsed_url = new URL(request.url);
+    if (parsed_url.protocol === "https:" || parsed_url.protocol === "http:") {
+      out.public_origin = parsed_url.origin;
+    }
+  }
+  catch {}
 
   // Optional Time Trial session verification & pending-launch handoff.
   // Fail-open on regular launches if bot/JWT secrets are not configured yet.

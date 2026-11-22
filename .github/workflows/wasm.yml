@@ -185,6 +185,9 @@ jobs:
       - name: Pack GUI overlay
         run: bash wasm/pack_gui_overlay.sh
 
+      - name: Extract Rich Presence track/kart assets
+        run: bash wasm/extract_presence_assets.sh
+
       - name: Ensure runtime config.json
         run: |
           if [ ! -f wasm/web/config.json ]; then

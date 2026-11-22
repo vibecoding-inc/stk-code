@@ -41,7 +41,7 @@ export async function init_discord_activity({
       response_type: "code",
       state: "",
       prompt: "none",
-      scope: ["identify", "guilds.members.read"],
+      scope: ["identify", "guilds.members.read", "rpc.activities.write"],
     });
 
     let token_payload = {code};
@@ -65,6 +65,7 @@ export async function init_discord_activity({
     global_scope.discordSessionToken = result.session_token || null;
     global_scope.discordGuildMember = result.guild_member || null;
     global_scope.stkPendingTimeTrial = result.pending_time_trial || null;
+    global_scope.stkPublicOrigin = result.public_origin || null;
     logger.log(`Discord login succeeded for ${auth.user.username}.`);
     return auth;
   }

@@ -86,7 +86,11 @@ test("init_discord_activity authenticates through the local token endpoint", {co
         assert.equal(options.client_id, "client-id");
         assert.equal(options.response_type, "code");
         assert.equal(options.prompt, "none");
-        assert.deepEqual(options.scope, ["identify", "guilds.members.read"]);
+        assert.deepEqual(options.scope, [
+          "identify",
+          "guilds.members.read",
+          "rpc.activities.write",
+        ]);
         return {code: "discord-code"};
       },
       authenticate: async ({access_token}) => {

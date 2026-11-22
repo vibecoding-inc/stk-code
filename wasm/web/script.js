@@ -8,6 +8,7 @@ import {
 } from "/discord-activity.js";
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
 import { create_scoreboard_sharer, is_discord_share_available } from "/discord-share.js";
+import { create_discord_presence } from "/discord-presence.js";
 import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
 import {
   create_discord_avatar_cache,
@@ -604,6 +605,17 @@ async function main() {
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
   }
+
+  globalThis.stkDiscordPresence = create_discord_presence({
+    get_discord_sdk: () => globalThis.discordSdk || null,
+    get_discord_auth: () => globalThis.discordAuth || null,
+    get_public_origin: () => globalThis.stkPublicOrigin || null,
+    fetch_impl: (...args) => fetch(...args),
+    logger: console,
+    on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
+  });
+  globalThis.stkDiscordPresence.loadManifest();
+  globalThis.stkDiscordPresence.update({phase: "loading"}, {force: true});
 
   globalThis.stkDiscordInvite = {
     isAvailable: () => can_open_invite_dialog(globalThis),

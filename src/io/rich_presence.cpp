@@ -21,8 +21,13 @@
 #include "online/request_manager.hpp"
 #include "online/http_request.hpp"
 
-#if defined(__SWITCH__) || defined(MOBILE_STK) || defined(SERVER_ONLY)
+#if defined(__SWITCH__) || defined(MOBILE_STK) || defined(SERVER_ONLY) || defined(__EMSCRIPTEN__)
 #define DISABLE_RPC
+#endif
+
+#if defined(__EMSCRIPTEN__) && !defined(SERVER_ONLY)
+#include <emscripten.h>
+#include <sstream>
 #endif
 
 #if !defined(WIN32) && !defined(DISABLE_RPC)
@@ -401,6 +406,151 @@ void RichPresence::ensureCache()
 
 void RichPresence::update(bool force)
 {
+#if defined(__EMSCRIPTEN__) && !defined(SERVER_ONLY)
+    if (STKProcess::getType() != PT_MAIN)
+        return;
+
+    time_t now = time(NULL);
+    if (!force && (now - m_last) < 5)
+        return;
+    m_last = now;
+
+    auto escape_json = [](const std::string& s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 8);
+        for (unsigned char c : s)
+        {
+            switch (c)
+            {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b";  break;
+                case '\f': out += "\\f";  break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:
+                    if (c >= 0x20)
+                        out.push_back((char)c);
+                    break;
+            }
+        }
+        return out;
+    };
+
+    World* world = World::getWorld();
+    RaceManager* rm = RaceManager::get();
+    auto cl = LobbyProtocol::get<ClientLobby>();
+
+    bool in_mp = (cl != nullptr && cl->getJoinedServer() != nullptr);
+    int human_players = 0;
+    int max_players = 0;
+    if (in_mp)
+    {
+        for (const LobbyPlayer& lp : cl->getLobbyPlayers())
+        {
+            if (!lp.isAI())
+                human_players++;
+        }
+        if (human_players == 0 && world && rm)
+        {
+            unsigned int n = rm->getNumberOfKarts();
+            for (unsigned int i = 0; i < n; i++)
+            {
+                auto kt = rm->getKartType(i);
+                if (kt == RaceManager::KT_PLAYER || kt == RaceManager::KT_NETWORK_PLAYER)
+                    human_players++;
+            }
+        }
+        if (human_players == 0)
+            human_players = 1;
+        max_players = cl->getJoinedServer()->getMaxPlayers();
+    }
+
+    std::string phase = "menu";
+    std::string track_ident;
+    std::string track_name;
+    std::string kart_ident;
+    std::string kart_name;
+    std::string mode_name;
+    int rank = 0;
+    int total_karts = 0;
+    bool is_time_trial = false;
+
+    if (world && rm)
+    {
+        std::string tid = rm->getTrackName();
+        Track* track = track_manager ? track_manager->getTrack(tid) : nullptr;
+        if (track && !track->isInternal())
+        {
+            track_ident = track->getIdent();
+            track_name = StringUtils::wideToUtf8(track->getName());
+        }
+
+        bool is_spectating = (in_mp && cl->isSpectator());
+        is_time_trial = rm->isTimeTrialMode();
+        bool is_finished = (world->getPhase() == WorldStatus::RESULT_DISPLAY_PHASE ||
+                            world->isFinishPhase());
+        mode_name = StringUtils::wideToUtf8(rm->getNameOf(rm->getMinorMode()));
+
+        if (is_spectating)
+            phase = "spectating";
+        else if (is_finished)
+            phase = "results";
+        else
+            phase = "race";
+
+        AbstractKart* local_kart = world->getLocalPlayerKart(0);
+        if (local_kart && !is_spectating)
+        {
+            kart_ident = local_kart->getIdent();
+            if (const KartProperties* kp = local_kart->getKartProperties())
+                kart_name = StringUtils::wideToUtf8(kp->getName());
+            if (rm->isLinearRaceMode() && !is_time_trial)
+            {
+                int pos = local_kart->getPosition();
+                if (pos > 0)
+                    rank = pos;
+                total_karts = (int)world->getNumKarts();
+            }
+        }
+    }
+    else if (in_mp)
+    {
+        phase = "lobby";
+    }
+
+    std::ostringstream oss;
+    oss << "{"
+        << "\"phase\":\"" << escape_json(phase) << "\","
+        << "\"track_ident\":\"" << escape_json(track_ident) << "\","
+        << "\"track_name\":\"" << escape_json(track_name) << "\","
+        << "\"kart_ident\":\"" << escape_json(kart_ident) << "\","
+        << "\"kart_name\":\"" << escape_json(kart_name) << "\","
+        << "\"mode_name\":\"" << escape_json(mode_name) << "\","
+        << "\"rank\":" << rank << ","
+        << "\"total_karts\":" << total_karts << ","
+        << "\"is_time_trial\":" << (is_time_trial ? "true" : "false") << ","
+        << "\"in_multiplayer\":" << (in_mp ? "true" : "false") << ","
+        << "\"human_players\":" << human_players << ","
+        << "\"max_players\":" << max_players
+        << "}";
+    std::string payload = oss.str();
+
+    EM_ASM({
+        if (globalThis.stkDiscordPresence &&
+            typeof globalThis.stkDiscordPresence.update === "function")
+        {
+            try
+            {
+                var data = JSON.parse(UTF8ToString($0));
+                globalThis.stkDiscordPresence.update(data, { force: Boolean($1) });
+            }
+            catch (e) {}
+        }
+    }, payload.c_str(), force ? 1 : 0);
+    return;
+#endif // __EMSCRIPTEN__ && !SERVER_ONLY
 #ifndef DISABLE_RPC
     if (STKProcess::getType() != PT_MAIN)
     {
