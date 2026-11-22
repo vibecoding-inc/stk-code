@@ -885,9 +885,70 @@ async function handleSubmitRun({request, env, ctx, fetch_impl = fetch}) {
   });
 }
 
+async function handleGetScopeProfiles({request, env}) {
+  if (!env.TIME_TRIALS_DB) {
+    return json_response({error: "TIME_TRIALS_DB is not configured."}, 503);
+  }
+  let auth = await authenticate_session(request, env);
+  if (auth.error) return auth.error;
+  let {claims} = auth;
+
+  let url = new URL(request.url);
+  let raw_ids = (url.searchParams.get("ids") || "").trim();
+  let ids = raw_ids
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s))
+    .slice(0, 50);
+
+  if (ids.length === 0) {
+    return json_response({
+      scope_type: claims.scope_type,
+      scope_id: claims.scope_id,
+      profiles: [],
+    });
+  }
+
+  let placeholders = ids.map(() => "?").join(", ");
+  let rows_result = await env.TIME_TRIALS_DB
+    .prepare(
+      `SELECT u.user_id, u.display_name, u.username, u.avatar,
+              sm.guild_nick, sm.guild_avatar
+       FROM scope_members sm
+       INNER JOIN users u ON u.user_id = sm.user_id
+       WHERE sm.scope_type = ? AND sm.scope_id = ?
+         AND sm.user_id IN (${placeholders})`
+    )
+    .bind(claims.scope_type, claims.scope_id, ...ids)
+    .all();
+
+  let guild_id = claims.scope_type === "guild" ? claims.scope_id : null;
+  let profiles = (rows_result && rows_result.results ? rows_result.results : []).map((row) => ({
+    user_id: row.user_id,
+    display_name: row.guild_nick || row.display_name || row.username || "Player",
+    guild_nick: row.guild_nick || null,
+    avatar: row.avatar || null,
+    guild_avatar: row.guild_avatar || null,
+    guild_id,
+  }));
+
+  return json_response({
+    scope_type: claims.scope_type,
+    scope_id: claims.scope_id,
+    profiles,
+  });
+}
+
 export async function handleTimeTrials({request, env, ctx, fetch_impl = fetch}) {
   let url = new URL(request.url);
   let path = url.pathname;
+
+  if (path === "/api/timetrials/scope-profiles") {
+    if (request.method !== "GET") {
+      return new Response("Method Not Allowed", {status: 405});
+    }
+    return handleGetScopeProfiles({request, env});
+  }
 
   let challenge_match = path.match(/^\/api\/timetrials\/challenges\/([A-Za-z0-9_-]+)$/);
   if (challenge_match) {

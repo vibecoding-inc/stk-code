@@ -15,7 +15,7 @@
 
 import { sign_jwt } from "./jwt.mjs";
 import { get_track } from "./tracks.mjs";
-import { upsert_user } from "./time-trials.mjs";
+import { upsert_user, ensure_scope_member } from "./time-trials.mjs";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 
@@ -107,13 +107,47 @@ export async function handleTokenExchange({request, env, fetch_impl = fetch}) {
           let channel_id = String(location.channel_id);
           let display_name = String(user.global_name || user.username || "Player");
 
+          let guild_member = null;
+          if (location.guild_id) {
+            try {
+              let member_resp = await fetch_impl(
+                `${DISCORD_API_BASE}/users/@me/guilds/${encodeURIComponent(location.guild_id)}/member`,
+                {headers: {Authorization: `Bearer ${result.access_token}`}}
+              );
+              if (member_resp.ok) {
+                let member = await member_resp.json();
+                guild_member = {
+                  guild_id: String(location.guild_id),
+                  guild_nick: member && member.nick ? String(member.nick) : null,
+                  guild_avatar: member && member.avatar ? String(member.avatar) : null,
+                };
+              }
+            }
+            catch {
+              // Fail-open if guilds.members.read was not granted or Discord API errored
+            }
+          }
+
           if (env.TIME_TRIALS_DB) {
+            let now = Date.now();
             await upsert_user(env.TIME_TRIALS_DB, {
               user_id: String(user.id),
               username: String(user.username || "Player"),
               display_name,
               avatar: user.avatar ? String(user.avatar) : null,
-            });
+            }, now);
+            await ensure_scope_member(env.TIME_TRIALS_DB, {
+              scope_type,
+              scope_id,
+              user_id: String(user.id),
+              guild_nick: guild_member ? guild_member.guild_nick : null,
+              guild_avatar: guild_member ? guild_member.guild_avatar : null,
+              update_guild_profile: Boolean(guild_member),
+            }, now);
+          }
+
+          if (guild_member) {
+            out.guild_member = guild_member;
           }
 
           out.session_token = await sign_jwt(

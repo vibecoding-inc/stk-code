@@ -297,8 +297,11 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
     if (String(url).includes("/oauth2/token")) {
       return new Response(JSON.stringify({access_token: "discord-access-tok"}), {status: 200});
     }
+    if (String(url).includes("/users/@me/guilds/guild_A/member")) {
+      return new Response(JSON.stringify({nick: "SpeedDemon", avatar: "guild_av_1"}), {status: 200});
+    }
     if (String(url).includes("/users/@me")) {
-      return new Response(JSON.stringify({id: "user_1", username: "alice", global_name: "Alice"}), {status: 200});
+      return new Response(JSON.stringify({id: "user_1", username: "alice", global_name: "Alice", avatar: "global_av_1"}), {status: 200});
     }
     if (String(url).includes("/activity-instances/inst_guild_1")) {
       return new Response(

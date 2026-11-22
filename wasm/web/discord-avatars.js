@@ -326,8 +326,11 @@ function push_user_to_cpp(module, get_heap_u8, {user_id, display_name, avatar_pa
  */
 export function create_participant_avatar_sync({
   avatar_cache,
+  fetch_impl = (...args) => fetch(...args),
   get_discord_sdk = () => globalThis.discordSdk || null,
   get_discord_auth = () => globalThis.discordAuth || null,
+  get_session_token = () => globalThis.discordSessionToken || null,
+  get_guild_member = () => globalThis.discordGuildMember || null,
   get_module = () => (typeof Module !== "undefined" ? Module : null),
   get_heap_u8 = () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (typeof Module !== "undefined" ? Module.HEAPU8 : null)),
   logger = console,
@@ -341,19 +344,61 @@ export function create_participant_avatar_sync({
   // pre-launch HTML screen triggers Emscripten's -sASSERTIONS=1 runtime-init abort.
   let wasm_ready = false;
 
+  async function fetch_scope_profiles(user_ids) {
+    let token = get_session_token();
+    if (!token || !Array.isArray(user_ids) || user_ids.length === 0) {
+      return new Map();
+    }
+    try {
+      let resp = await fetch_impl(
+        `/api/timetrials/scope-profiles?ids=${encodeURIComponent(user_ids.join(","))}`,
+        {headers: {Authorization: `Bearer ${token}`}}
+      );
+      if (!resp.ok) return new Map();
+      let body = await resp.json();
+      let map = new Map();
+      for (let p of (body && Array.isArray(body.profiles) ? body.profiles : [])) {
+        if (p && p.user_id) map.set(String(p.user_id), p);
+      }
+      return map;
+    }
+    catch {
+      return new Map();
+    }
+  }
+
   async function sync_users(users, source = "unknown") {
     if (!Array.isArray(users) || !avatar_cache) return;
+    let ids = users.map((u) => (u && u.id ? String(u.id) : null)).filter(Boolean);
+    let scope_profiles = await fetch_scope_profiles(ids);
+    let self_auth = get_discord_auth();
+    let self_id = self_auth && self_auth.user && self_auth.user.id ? String(self_auth.user.id) : null;
+    let self_member = get_guild_member();
+
     let avatars_loaded = 0;
     await Promise.all(
       users.map(async (u) => {
         if (!u || !u.id) return;
         let user_id = String(u.id);
         let prev = entries_by_id.get(user_id);
+        let sp = scope_profiles.get(user_id) || null;
+        let is_self = self_id && user_id === self_id;
 
-        // Preserve guild nickname when auth_self (which only has global_name) runs.
-        let guild_nick = u.nickname
-          ? String(u.nickname)
-          : (source === "auth_self" && prev ? prev.guild_nick : null);
+        let guild_id =
+          (is_self && self_member && self_member.guild_id) ||
+          (sp && sp.guild_id) ||
+          (prev && prev.guild_id) ||
+          null;
+        let guild_nick =
+          (is_self && self_member && self_member.guild_nick) ||
+          (sp && sp.guild_nick) ||
+          (u.nickname ? String(u.nickname) : null) ||
+          (source === "auth_self" && prev ? prev.guild_nick : null);
+        let guild_avatar =
+          (is_self && self_member && self_member.guild_avatar) ||
+          (sp && sp.guild_avatar) ||
+          (prev && prev.guild_avatar) ||
+          null;
         let global_name = u.global_name
           ? String(u.global_name)
           : (prev ? prev.global_name : null);
@@ -364,11 +409,22 @@ export function create_participant_avatar_sync({
 
         let avatar_path = (await avatar_cache.ensureAvatar({
           user_id,
-          avatar: u.avatar ? String(u.avatar) : null,
+          avatar: (u.avatar ? String(u.avatar) : null) || (sp && sp.avatar) || null,
+          guild_id,
+          guild_avatar,
         })) || (prev ? prev.avatar_path : "");
         if (avatar_path) avatars_loaded++;
 
-        let entry = {user_id, username, global_name, guild_nick, display_name, avatar_path};
+        let entry = {
+          user_id,
+          username,
+          global_name,
+          guild_id,
+          guild_nick,
+          guild_avatar,
+          display_name,
+          avatar_path,
+        };
         entries_by_id.set(user_id, entry);
         if (wasm_ready) {
           push_user_to_cpp(get_module(), get_heap_u8, entry);
@@ -379,6 +435,7 @@ export function create_participant_avatar_sync({
       source,
       count: users.length,
       avatars_loaded,
+      scope_profiles_matched: scope_profiles.size,
       cdn_base: avatar_cache.cdn_base || null,
     });
   }

@@ -638,8 +638,11 @@ async function main() {
 
   globalThis.stkDiscordParticipants = create_participant_avatar_sync({
     avatar_cache: globalThis.stkDiscordAvatars,
+    fetch_impl: (...args) => fetch(...args),
     get_discord_sdk: () => globalThis.discordSdk || null,
     get_discord_auth: () => globalThis.discordAuth || null,
+    get_session_token: () => globalThis.discordSessionToken || null,
+    get_guild_member: () => globalThis.discordGuildMember || null,
     get_module: () => Module,
     get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
     logger: console,
