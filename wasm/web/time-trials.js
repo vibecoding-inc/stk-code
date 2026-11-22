@@ -74,12 +74,33 @@ export function create_time_trials_bridge({
   get_module = () => (typeof Module !== "undefined" ? Module : null),
   get_heap_u8 = () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (typeof Module !== "undefined" ? Module.HEAPU8 : null)),
   gzip_impl,
+  ungzip_impl,
   logger = console,
   on_lifecycle = () => {},
 } = {}) {
   let prepared_challenge = null;
+  let pending_submit_promise = null;
+
+  function maybe_ungzip(bytes) {
+    if (
+      bytes &&
+      bytes.length >= 2 &&
+      bytes[0] === 0x1f &&
+      bytes[1] === 0x8b &&
+      typeof ungzip_impl === "function"
+    ) {
+      return new Uint8Array(ungzip_impl(bytes));
+    }
+    return bytes;
+  }
 
   async function fetch_challenge_and_ghosts(challenge_id) {
+    // Wait for any in-flight run upload to settle before refreshing ghosts so
+    // clicking Restart immediately after finishing includes the new PB.
+    if (pending_submit_promise) {
+      await pending_submit_promise.catch(() => {});
+    }
+
     let token = get_session_token();
     if (!token) {
       throw new Error("Missing Discord Time Trial session token.");
@@ -110,8 +131,15 @@ export function create_time_trials_bridge({
               logger.warn(`Failed to download ghost ${g.run_id} (${r.status})`);
               return null;
             }
-            let bytes = new Uint8Array(await r.arrayBuffer());
-            if (bytes.length === 0) return null;
+            let raw_bytes = new Uint8Array(await r.arrayBuffer());
+            if (raw_bytes.length === 0) return null;
+            let bytes = maybe_ungzip(raw_bytes);
+            // Sanity check header ("version:") so corrupt/encoded blobs are logged clearly.
+            let header_preview = new TextDecoder().decode(bytes.subarray(0, 16));
+            if (!header_preview.startsWith("version:")) {
+              logger.warn(`Ghost ${g.run_id} has unexpected header: ${JSON.stringify(header_preview)}`);
+              return null;
+            }
             let path = `${GHOST_DIR}/${g.run_id}.replay`;
             fs.writeFile(path, bytes);
             return path;
@@ -195,7 +223,7 @@ export function create_time_trials_bridge({
       let raw_copy = new Uint8Array(replay_len);
       raw_copy.set(heap.subarray(replay_ptr, replay_ptr + replay_len));
 
-      (async () => {
+      let submit_promise = (async () => {
         try {
           let gzipped = typeof gzip_impl === "function"
             ? gzip_impl(raw_copy)
@@ -237,7 +265,13 @@ export function create_time_trials_bridge({
             {error: err && err.message ? err.message : String(err)}
           );
         }
+        finally {
+          if (pending_submit_promise === submit_promise) {
+            pending_submit_promise = null;
+          }
+        }
       })();
+      pending_submit_promise = submit_promise;
     },
   };
 }

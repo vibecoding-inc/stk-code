@@ -633,6 +633,7 @@ async function main() {
     get_module: () => Module,
     get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
     gzip_impl: (bytes) => pako.gzip(bytes),
+    ungzip_impl: (bytes) => pako.ungzip(bytes),
     logger: console,
     on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
   });

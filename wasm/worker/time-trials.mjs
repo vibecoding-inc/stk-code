@@ -566,8 +566,10 @@ async function handleGetReplay({request, env, run_id}) {
   return new Response(obj.body, {
     status: 200,
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Encoding": "gzip",
+      // Serve raw gzipped bytes without Content-Encoding so neither Cloudflare's
+      // edge nor Discord's proxy re-compresses or strips the encoding; the
+      // browser client decompresses explicitly via vendored pako.ungzip.
+      "Content-Type": "application/octet-stream",
       "Cache-Control": "public, max-age=31536000, immutable",
     },
   });

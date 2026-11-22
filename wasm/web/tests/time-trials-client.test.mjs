@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { create_time_trials_bridge } from "../time-trials.js";
 
 function create_mock_fs() {
@@ -130,4 +131,46 @@ test("requestSubmitRun copies heap bytes, gzips, posts, and invokes C++ callback
   assert.equal(wasm.calls[0].req_id, 7);
   assert.equal(wasm.calls[0].status, 200);
   assert.equal(wasm.calls[0].payload.is_new_pb, true);
+});
+
+test("fetchChallengeAndGhosts decompresses gzipped replay payloads before writing to MEMFS", async () => {
+  let fs = create_mock_fs();
+  let wasm = create_mock_wasm();
+  let plain_replay = "version: 4\nstk_version: 1.5\ntrack: volcano_island\n";
+  let gzipped_replay = gzipSync(Buffer.from(plain_replay, "utf8"));
+
+  let fetch_impl = async (url) => {
+    if (url.includes("/api/timetrials/challenges/ch2")) {
+      return new Response(
+        JSON.stringify({
+          challenge: {challenge_id: "ch2", track: "volcano_island", difficulty: 2, laps: 1, reverse: false},
+          total_players: 1,
+          leaderboard: [],
+          ghosts: [{run_id: "r_gz", url: "/api/timetrials/runs/r_gz/replay"}],
+        }),
+        {status: 200}
+      );
+    }
+    if (url === "/api/timetrials/runs/r_gz/replay") {
+      return new Response(gzipped_replay, {
+        status: 200,
+        headers: {"Content-Type": "application/octet-stream"},
+      });
+    }
+    return new Response("Not Found", {status: 404});
+  };
+
+  let bridge = create_time_trials_bridge({
+    fetch_impl,
+    get_session_token: () => "jwt-token",
+    get_fs: () => fs,
+    get_module: () => wasm.module,
+    get_heap_u8: () => wasm.heap,
+    ungzip_impl: (bytes) => gunzipSync(Buffer.from(bytes)),
+  });
+
+  let result = await bridge.fetchChallengeAndGhosts("ch2");
+  assert.deepEqual(result.ghost_files, ["/tmp/tt_ghosts/r_gz.replay"]);
+  let written = new TextDecoder().decode(fs._files.get("/tmp/tt_ghosts/r_gz.replay"));
+  assert.equal(written, plain_replay);
 });
