@@ -4,6 +4,7 @@
 !wasm/podium-renderer/src/**
 !wasm/podium-renderer/tests/**
 !wasm/podium-renderer/generated-assets/**
+!wasm/podium-renderer/tracks/**
 !data/ttf/SigmarOne.otf
 !data/ttf/Cantarell-Regular.otf
 !data/ttf/wqy-microhei.ttf

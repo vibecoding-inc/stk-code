@@ -31,6 +31,7 @@ COPY data/ttf/SigmarOne.otf data/ttf/Cantarell-Regular.otf data/ttf/wqy-microhei
 # Optional pre-rendered 3D podium/kart assets & track screenshots (mounted in
 # local dev/preview or populated before `docker build` in CI).
 COPY wasm/podium-renderer/generated-assets/ /app/assets/
+COPY wasm/podium-renderer/tracks/ /app/tracks/
 
 USER node
 EXPOSE 3000

@@ -1,0 +1,230 @@
+name: Podium Renderer Docker Image
+
+on:
+  push:
+    branches: [wasm]
+    paths:
+      - 'wasm/podium-renderer/**'
+      - '.github/workflows/podium-renderer.yml'
+  pull_request:
+    branches: [wasm]
+    paths:
+      - 'wasm/podium-renderer/**'
+      - '.github/workflows/podium-renderer.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: podium-renderer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-podium-renderer
+  STK_ASSETS_URL: https://svn.code.sf.net/p/supertuxkart/code/stk-assets
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run Python SPM parser unit tests
+        run: python3 -m unittest discover -s wasm/podium-renderer/assets-gen -v
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install podium-renderer dependencies & run unit tests
+        working-directory: wasm/podium-renderer
+        run: |
+          npm install --omit=dev
+          npm test
+
+  render-assets:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache pre-rendered 3D podium & kart PNGs
+        id: assets-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            wasm/podium-renderer/generated-assets
+            wasm/podium-renderer/tracks
+          key: podium-assets-v1-${{ hashFiles('wasm/podium-renderer/assets-gen/**') }}
+
+      - name: Fetch STK kart/texture assets & track screenshots (on cache miss)
+        if: steps.assets-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends subversion
+          mkdir -p wasm/stk-assets wasm/podium-renderer/tracks
+          svn checkout --non-interactive "${STK_ASSETS_URL}/karts" wasm/stk-assets/karts
+          svn checkout --non-interactive "${STK_ASSETS_URL}/textures" wasm/stk-assets/textures
+
+          # Fetch track screenshots for per-track blurred podium backdrops (best-effort)
+          python3 - <<'PY'
+          import os, subprocess, xml.etree.ElementTree as ET
+
+          base = os.environ["STK_ASSETS_URL"]
+          out_dir = "wasm/podium-renderer/tracks"
+          res = subprocess.run(
+              ["svn", "list", "--non-interactive", f"{base}/tracks"],
+              capture_output=True, text=True, check=False,
+          )
+          for line in res.stdout.splitlines():
+              ident = line.strip().rstrip("/")
+              if not ident:
+                  continue
+              xml_res = subprocess.run(
+                  ["svn", "cat", "--non-interactive", f"{base}/tracks/{ident}/track.xml"],
+                  capture_output=True, text=True, check=False,
+              )
+              if xml_res.returncode != 0:
+                  continue
+              try:
+                  root = ET.fromstring(xml_res.stdout)
+              except ET.ParseError:
+                  continue
+              shot = (root.attrib.get("screenshot") or "").strip()
+              if not shot:
+                  continue
+              ext = os.path.splitext(shot)[1].lower() or ".jpg"
+              dst = os.path.join(out_dir, f"{ident}{ext}")
+              subprocess.run(
+                  ["svn", "export", "--non-interactive", "--force", f"{base}/tracks/{ident}/{shot}", dst],
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+              )
+          PY
+
+      - name: Render 3D podium & all kart poses in headless Blender (on cache miss)
+        if: steps.assets-cache.outputs.cache-hit != 'true'
+        run: wasm/podium-renderer/assets-gen/generate.sh --samples 32
+
+      - name: Upload generated podium assets artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: podium-assets
+          path: |
+            wasm/podium-renderer/generated-assets
+            wasm/podium-renderer/tracks
+          retention-days: 1
+
+  build:
+    needs: render-assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            slug: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            slug: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download generated podium assets
+        uses: actions/download-artifact@v8
+        with:
+          name: podium-assets
+          path: wasm/podium-renderer
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Build and push by digest (${{ matrix.platform }})
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: wasm/podium-renderer/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, env.IMAGE_NAME) || 'type=cacheonly' }}
+          cache-from: type=gha,scope=podium-renderer-${{ matrix.slug }}
+          cache-to: type=gha,scope=podium-renderer-${{ matrix.slug }},mode=max
+
+      - name: Export image digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload image digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/wasm' }}
+            type=sha,prefix=sha-
+
+      - name: Merge multi-arch manifest and push tags
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${REGISTRY}/${IMAGE_NAME}@sha256:%s " *)
