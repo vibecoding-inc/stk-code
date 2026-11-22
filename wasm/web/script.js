@@ -528,7 +528,13 @@ async function main() {
     if (telemetry && auth && auth.user && auth.user.id) {
       telemetry.enrich({discord_user_id: String(auth.user.id)});
     }
-    log_lifecycle("discord_init_done", {authenticated: Boolean(auth && auth.user)});
+    log_lifecycle("discord_init_done", {
+      authenticated: Boolean(auth && auth.user),
+      hardware_acceleration:
+        typeof globalThis.discordHardwareAccelerationEnabled === "boolean"
+          ? globalThis.discordHardwareAccelerationEnabled
+          : null,
+    });
   }
   catch {}
   let discord_username = get_discord_username(globalThis.discordAuth);

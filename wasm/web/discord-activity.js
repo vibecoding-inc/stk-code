@@ -19,6 +19,23 @@ export async function init_discord_activity({
     await discord_sdk.ready();
     global_scope.discordSdk = discord_sdk;
 
+    if (
+      discord_sdk.commands &&
+      typeof discord_sdk.commands.encourageHardwareAcceleration === "function"
+    ) {
+      try {
+        let result = await discord_sdk.commands.encourageHardwareAcceleration();
+        let enabled = Boolean(result && result.enabled);
+        global_scope.discordHardwareAccelerationEnabled = enabled;
+        logger.log(
+          `Discord Hardware Acceleration is ${enabled ? "enabled" : "disabled"}.`
+        );
+      }
+      catch (err) {
+        logger.warn("Discord encourageHardwareAcceleration failed.", err);
+      }
+    }
+
     let {code} = await discord_sdk.commands.authorize({
       client_id: config.discord_client_id,
       response_type: "code",

@@ -163,3 +163,91 @@ test("init_discord_activity logs warnings when authentication fails", {concurren
   assert.equal(auth, undefined);
   assert.deepEqual(warnings, ["Discord Activity login failed."]);
 });
+
+test("init_discord_activity encourages hardware acceleration after ready", {concurrency: false}, async () => {
+  let order = [];
+  let logs = [];
+  let logger = {
+    log(...args) {
+      logs.push(args.join(" "));
+    },
+    warn() {
+      throw new Error("No warning expected when encourageHardwareAcceleration succeeds.");
+    },
+  };
+  let global_scope = {};
+
+  let auth = await init_discord_activity({
+    config: {discord_client_id: "client-id"},
+    search: "?frame_id=999",
+    create_discord_sdk() {
+      return {
+        ready: async () => {
+          order.push("ready");
+        },
+        commands: {
+          encourageHardwareAcceleration: async () => {
+            order.push("encourageHardwareAcceleration");
+            return {enabled: false};
+          },
+          authorize: async () => {
+            order.push("authorize");
+            return {code: "discord-code"};
+          },
+          authenticate: async () => {
+            order.push("authenticate");
+            return {user: {id: "1", username: "penguin"}};
+          },
+        },
+      };
+    },
+    fetch_impl: async () => Response.json({access_token: "discord-access-token"}),
+    logger,
+    global_scope,
+  });
+
+  assert.deepEqual(order, [
+    "ready",
+    "encourageHardwareAcceleration",
+    "authorize",
+    "authenticate",
+  ]);
+  assert.equal(global_scope.discordHardwareAccelerationEnabled, false);
+  assert.equal(auth.user.username, "penguin");
+  assert.match(logs[0], /Hardware Acceleration is disabled/);
+});
+
+test("init_discord_activity continues login if encourageHardwareAcceleration fails", {concurrency: false}, async () => {
+  let warnings = [];
+  let logger = {
+    log() {},
+    warn(...args) {
+      warnings.push(args[0]);
+    },
+  };
+  let global_scope = {};
+
+  let auth = await init_discord_activity({
+    config: {discord_client_id: "client-id"},
+    search: "?frame_id=1000",
+    create_discord_sdk() {
+      return {
+        ready: async () => {},
+        commands: {
+          encourageHardwareAcceleration: async () => {
+            throw new Error("command unsupported");
+          },
+          authorize: async () => ({code: "discord-code"}),
+          authenticate: async () => ({user: {id: "2", username: "tux"}}),
+        },
+      };
+    },
+    fetch_impl: async () => Response.json({access_token: "discord-access-token"}),
+    logger,
+    global_scope,
+  });
+
+  assert.equal(global_scope.discordHardwareAccelerationEnabled, undefined);
+  assert.equal(auth.user.username, "tux");
+  assert.deepEqual(warnings, ["Discord encourageHardwareAcceleration failed."]);
+});
