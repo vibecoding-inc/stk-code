@@ -31,91 +31,83 @@ class AbstractKart;
 class GhostKart;
 
 /**
- * Shared registry mapping karts and lobby players (Time Trial ghosts and
- * multiplayer participants) to their Discord display name and circular avatar
- * texture loaded from MEMFS.
+ * Single source of truth for Discord player identity and circular avatars in STK.
+ *
+ * Canonical player names throughout STK (profiles, ENet lobby packets, chat,
+ * karts, and replays) use Discord's `<@user_id>` mention token.
+ *
+ * - `resolveMentions()` is hooked centrally at the font rendering boundary
+ *   (FontManager / FontWithFace) so EVERY 2D and 3D text surface automatically
+ *   renders the user's current guild/global display name.
+ * - `getAvatarTextureForText()` / `getAvatarTextureForKart()` extract the
+ *   `<@user_id>` token and resolve the cached circular MEMFS PNG texture.
  */
 class DiscordAvatarManager
 {
 public:
-    struct Entry
+    struct UserEntry
     {
         std::string display_name_utf8;
+        irr::core::stringw display_name_wide;
         std::string avatar_path;
         irr::video::ITexture* texture = nullptr;
         bool texture_attempted = false;
     };
 
 private:
-    std::unordered_map<std::string, Entry> m_replay_meta;
-    std::unordered_map<std::string, Entry> m_username_meta;
-    std::unordered_map<unsigned int, Entry> m_kart_entries;
+    std::unordered_map<std::string, UserEntry> m_users_by_id;
+    std::unordered_map<std::string, std::string> m_replay_controller_names;
     uint64_t m_version = 0;
 
     DiscordAvatarManager() = default;
 
-    static std::string normalizeUsername(const std::string& utf8);
-    static irr::video::ITexture* resolveTexture(Entry& e);
+    static irr::video::ITexture* resolveTexture(UserEntry& e);
 
 public:
     static DiscordAvatarManager* get();
 
-    /** Monotonic counter incremented whenever participant metadata changes. */
+    /** Monotonic counter incremented whenever user metadata changes. */
     uint64_t getVersion() const { return m_version; }
 
     /** Flushes any Discord Activity participants already fetched in JS. */
     void syncParticipantsFromJS();
 
-    /** Clears all replay metadata and per-kart bindings (preserves live participants). */
-    void clearAll();
+    /** Clears per-challenge replay -> mention mappings (preserves cached users). */
+    void clearReplayMappings();
 
-    /** Clears only per-kart bindings (keeping replay & participant metadata). */
-    void clearKartBindings();
+    /** Registers or updates a Discord user's display name and MEMFS avatar path. */
+    void registerUser(const std::string& user_id,
+                      const std::string& display_name_utf8,
+                      const std::string& avatar_path);
 
-    /** Registers Discord display name and MEMFS avatar path for a replay file. */
-    void registerReplayMeta(const std::string& replay_path,
-                            const std::string& display_name_utf8,
-                            const std::string& avatar_path);
+    /** Maps a downloaded Time Trial replay path to its canonical `<@user_id>` (or `<@user_id> (PB)`) name. */
+    void registerReplayControllerName(const std::string& replay_path,
+                                      const std::string& controller_name_utf8);
 
-    /** Registers a live Discord Activity participant keyed by Discord username. */
-    void registerParticipant(const std::string& username_utf8,
-                             const std::string& display_name_utf8,
-                             const std::string& avatar_path);
+    /** Returns the canonical controller name registered for a replay path (or empty). */
+    irr::core::stringw getReplayControllerName(const std::string& replay_path) const;
 
-    /** Binds a world kart ID directly to a Discord display name and MEMFS avatar path. */
-    void bindKart(unsigned int world_kart_id,
-                  const std::string& display_name_utf8,
-                  const std::string& avatar_path);
+    /** Extracts the first `<@(\d+)>` Discord user ID from text, or returns empty string. */
+    static std::string extractDiscordId(const irr::core::stringw& text);
 
     /**
-     * Looks up a multiplayer player by Discord username, binds their kart for
-     * HUD / minimap / scoreboard avatars, and optionally attaches a 3D circular
-     * avatar billboard above their kart's nametag.
+     * Replaces every `<@(\d+)>` mention token in `text` with the user's registered
+     * display name (or "Player" if not yet synced). Zero-allocation fast path when
+     * `text` contains no `<@` sequence.
      */
-    void bindKartByUsername(AbstractKart* kart,
-                            const irr::core::stringw& username,
-                            bool attach_avatar_billboard);
+    irr::core::stringw resolveMentions(const irr::core::stringw& text) const;
 
-    /** Returns the Discord display name registered for a replay path (or empty). */
-    irr::core::stringw getReplayDisplayName(const std::string& replay_path) const;
+    /** Returns the circular Discord avatar texture for a `<@user_id>` string, or nullptr. */
+    irr::video::ITexture* getAvatarTextureForText(const irr::core::stringw& text);
 
-    /** Returns the circular Discord avatar texture for a Discord username, or nullptr. */
-    irr::video::ITexture* getAvatarTextureForUsername(const irr::core::stringw& username);
-
-    /** Returns the Discord display name for a Discord username, or empty string. */
-    irr::core::stringw getDisplayNameForUsername(const irr::core::stringw& username) const;
-
-    /** Returns the circular Discord avatar texture for a kart, or nullptr if none. */
+    /** Returns the circular Discord avatar texture for a kart (via its controller name), or nullptr. */
     irr::video::ITexture* getAvatarTextureForKart(const AbstractKart* kart);
 
-    /** Returns the Discord display name for a kart, or empty string if none. */
-    irr::core::stringw getDisplayNameForKart(const AbstractKart* kart) const;
+    /** Attaches a 3D circular Discord avatar billboard above a kart (if `<@id>` has an avatar). */
+    void attachAvatarBillboard(AbstractKart* kart);
 
-    /**
-     * Binds a GhostKart's world ID and attaches real 3D billboards (name + circular
-     * Discord avatar stacked above) parented to the ghost kart's scene node.
-     */
-    void attachGhostBillboards(GhostKart* ghost, const std::string& replay_path);
+    /** Attaches 3D name (`STKTextBillboard`) + circular avatar billboard above a GhostKart. */
+    void attachGhostBillboards(GhostKart* ghost);
 };
 
 #endif

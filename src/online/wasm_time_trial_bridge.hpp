@@ -43,11 +43,14 @@ private:
     int                      m_difficulty;
     int                      m_laps;
     bool                     m_reverse;
+    std::string              m_self_user_id;
     std::string              m_self_name;
     std::string              m_self_avatar;
     std::vector<std::string> m_ghost_files;
+    std::vector<std::string> m_ghost_user_ids;
     std::vector<std::string> m_ghost_names;
     std::vector<std::string> m_ghost_avatars;
+    std::vector<std::string> m_ghost_is_self;
 
     uint32_t                 m_next_req_id;
     uint32_t                 m_pending_refresh_req_id;

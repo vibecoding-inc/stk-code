@@ -1049,9 +1049,7 @@ void RaceResultGUI::determineTableLayout()
         RowInfo *ri = &(m_all_row_infos[position - first_position]);
         ri->m_kart_id = kart->getWorldKartId();
         ri->m_is_player_kart = kart->getController()->isLocalPlayerController();
-        core::stringw discord_name =
-            DiscordAvatarManager::get()->getDisplayNameForKart(kart);
-        ri->m_kart_name = discord_name.empty() ? kart->getController()->getName() : discord_name;
+        ri->m_kart_name = kart->getController()->getName();
         if (RaceManager::get()->getKartGlobalPlayerId(kart->getWorldKartId()) > -1)
         {
             const core::stringw& flag = StringUtils::getCountryFlag(
@@ -1519,9 +1517,7 @@ void RaceResultGUI::determineGPLayout()
         if (ri->m_avatar_icon)
             m_has_any_avatar = true;
         ri->m_is_player_kart = kart->getController()->isLocalPlayerController();
-        core::stringw discord_name =
-            DiscordAvatarManager::get()->getDisplayNameForKart(kart);
-        ri->m_kart_name = discord_name.empty() ? kart->getController()->getName() : discord_name;
+        ri->m_kart_name = kart->getController()->getName();
         if (RaceManager::get()->getKartGlobalPlayerId(kart->getWorldKartId()) > -1)
         {
             const core::stringw& flag = StringUtils::getCountryFlag(

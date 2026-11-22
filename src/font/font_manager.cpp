@@ -18,6 +18,8 @@
 
 #include "font/font_manager.hpp"
 
+#include "graphics/discord_avatar_manager.hpp"
+
 #include "io/file_manager.hpp"
 #include "font/bold_face.hpp"
 #include "font/digit_face.hpp"
@@ -724,15 +726,17 @@ void FontManager::initGlyphLayouts(const core::stringw& text,
     if (GUIEngine::isNoGraphics() || text.empty())
         return;
 
+    const core::stringw resolved = DiscordAvatarManager::get()->resolveMentions(text);
+
     if ((shape_flag & gui::SF_DISABLE_CACHE) != 0)
     {
-        shape(StringUtils::wideToUtf32(text), gls, shape_flag);
+        shape(StringUtils::wideToUtf32(resolved), gls, shape_flag);
         return;
     }
 
-    auto& cached_gls = getCachedLayouts(text);
+    auto& cached_gls = getCachedLayouts(resolved);
     if (cached_gls.empty())
-        shape(StringUtils::wideToUtf32(text), cached_gls, shape_flag);
+        shape(StringUtils::wideToUtf32(resolved), cached_gls, shape_flag);
     gls = cached_gls;
 }   // initGlyphLayouts
 

@@ -18,6 +18,8 @@
 
 #include "font/font_with_face.hpp"
 
+#include "graphics/discord_avatar_manager.hpp"
+
 #include "config/user_config.hpp"
 #include "font/face_ttf.hpp"
 #include "font/font_drawer.hpp"
@@ -498,17 +500,19 @@ core::dimension2d<u32> FontWithFace::getDimension(const core::stringw& text,
     if (GUIEngine::isNoGraphics())
         return core::dimension2d<u32>(1, 1);
 
+    const core::stringw resolved = DiscordAvatarManager::get()->resolveMentions(text);
+
     const float scale = (font_settings ? font_settings->getScale() : 1.0f)
                      * getNativeScalingFactor();
     if (disableTextShaping())
     {
-        return gui::getGlyphLayoutsDimension(text2GlyphsWithoutShaping(text),
+        return gui::getGlyphLayoutsDimension(text2GlyphsWithoutShaping(resolved),
             m_font_max_height * scale, 1.0f/*inverse shaping*/, scale);
     }
 
-    auto& gls = font_manager->getCachedLayouts(text);
-    if (gls.empty() && !text.empty())
-        font_manager->shape(StringUtils::wideToUtf32(text), gls);
+    auto& gls = font_manager->getCachedLayouts(resolved);
+    if (gls.empty() && !resolved.empty())
+        font_manager->shape(StringUtils::wideToUtf32(resolved), gls);
 
     return gui::getGlyphLayoutsDimension(gls,
         m_font_max_height * scale, m_inverse_shaping, scale);
@@ -967,16 +971,18 @@ void FontWithFace::drawText(const core::stringw& text,
     if (text.empty() || GUIEngine::isNoGraphics())
         return;
 
+    const core::stringw resolved = DiscordAvatarManager::get()->resolveMentions(text);
+
     if (disableTextShaping())
     {
-        render(text2GlyphsWithoutShaping(text), position, color, hcenter,
+        render(text2GlyphsWithoutShaping(resolved), position, color, hcenter,
             vcenter, clip, font_settings, char_collector);
         return;
     }
 
-    auto& gls = font_manager->getCachedLayouts(text);
-    if (gls.empty() && !text.empty())
-        font_manager->shape(StringUtils::wideToUtf32(text), gls);
+    auto& gls = font_manager->getCachedLayouts(resolved);
+    if (gls.empty() && !resolved.empty())
+        font_manager->shape(StringUtils::wideToUtf32(resolved), gls);
 
     render(gls, position, color, hcenter, vcenter, clip,
         font_settings, char_collector);
@@ -996,7 +1002,8 @@ void FontWithFace::drawTextQuick(const core::stringw& text,
     if (text.empty() || GUIEngine::isNoGraphics())
         return;
 
-    render(text2GlyphsWithoutShaping(text), position, color, hcenter,
+    const core::stringw resolved = DiscordAvatarManager::get()->resolveMentions(text);
+    render(text2GlyphsWithoutShaping(resolved), position, color, hcenter,
         vcenter, clip, font_settings, char_collector);
 #endif
 }   // drawTextQuick

@@ -995,9 +995,10 @@ void RaceGUIBase::drawGlobalPlayerIcons(int bottom_margin)
         }
 
         core::stringw title_to_draw = info.special_title;
-        if (title_to_draw.empty())
+        if (title_to_draw.empty() && kart->getController() &&
+            !DiscordAvatarManager::extractDiscordId(kart->getController()->getName()).empty())
         {
-            title_to_draw = DiscordAvatarManager::get()->getDisplayNameForKart(kart);
+            title_to_draw = kart->getController()->getName();
         }
         if (title_to_draw.size() > 0)
         {

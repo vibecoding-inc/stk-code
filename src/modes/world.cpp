@@ -60,7 +60,6 @@
 #include "network/network_config.hpp"
 #include "network/rewind_manager.hpp"
 #include "network/stk_host.hpp"
-#include "online/wasm_time_trial_bridge.hpp"
 #include "physics/btKart.hpp"
 #include "physics/physics.hpp"
 #include "physics/triangle_mesh.hpp"
@@ -232,10 +231,6 @@ void World::init()
         ReplayPlay::get()->load();
         for (unsigned int k = 0; k < gk; k++)
             m_karts.push_back(ReplayPlay::get()->getGhostKart(k));
-    }
-    else
-    {
-        DiscordAvatarManager::get()->clearKartBindings();
     }
     main_loop->renderGUI(6999);
 
@@ -554,29 +549,11 @@ std::shared_ptr<AbstractKart> World::createKart
         break;
     }
 
-    if (!online_name.empty())
-    {
-        core::stringw display =
-            DiscordAvatarManager::get()->getDisplayNameForUsername(online_name);
-        if (!controller->isLocalPlayerController())
-        {
-            new_kart->setOnScreenText(display.empty() ? online_name.c_str() : display.c_str());
-        }
-        DiscordAvatarManager::get()->bindKartByUsername(
-            new_kart.get(), online_name, !controller->isLocalPlayerController());
-    }
-    else if (controller->isLocalPlayerController() &&
-             WasmTimeTrialBridge::get()->isChallengeMode())
-    {
-        const std::string& self_name = WasmTimeTrialBridge::get()->getSelfName();
-        const std::string& self_avatar = WasmTimeTrialBridge::get()->getSelfAvatarPath();
-        if (!self_name.empty() || !self_avatar.empty())
-        {
-            DiscordAvatarManager::get()->bindKart(
-                new_kart->getWorldKartId(), self_name, self_avatar);
-        }
-    }
+    if (!controller->isLocalPlayerController() && !online_name.empty())
+        new_kart->setOnScreenText(online_name.c_str());
     new_kart->setController(controller);
+    if (!controller->isLocalPlayerController())
+        DiscordAvatarManager::get()->attachAvatarBillboard(new_kart.get());
     RaceManager::get()->setKartColor(index, ri->getHue());
     return new_kart;
 }   // createKart

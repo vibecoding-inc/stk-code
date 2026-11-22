@@ -19,12 +19,10 @@
 #include "graphics/discord_avatar_manager.hpp"
 
 #include "karts/abstract_kart.hpp"
+#include "karts/controller/controller.hpp"
 #include "karts/ghost_kart.hpp"
 #include "utils/log.hpp"
 #include "utils/string_utils.hpp"
-
-#include <algorithm>
-#include <cctype>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -42,16 +40,7 @@
 #endif
 
 // ----------------------------------------------------------------------------
-std::string DiscordAvatarManager::normalizeUsername(const std::string& utf8)
-{
-    std::string out = utf8;
-    std::transform(out.begin(), out.end(), out.begin(),
-                   [](unsigned char c) { return (char)std::tolower(c); });
-    return out;
-}   // normalizeUsername
-
-// ----------------------------------------------------------------------------
-irr::video::ITexture* DiscordAvatarManager::resolveTexture(Entry& e)
+irr::video::ITexture* DiscordAvatarManager::resolveTexture(UserEntry& e)
 {
 #ifndef SERVER_ONLY
     if (GUIEngine::isNoGraphics() || e.avatar_path.empty())
@@ -95,216 +84,207 @@ void DiscordAvatarManager::syncParticipantsFromJS()
 }   // syncParticipantsFromJS
 
 // ----------------------------------------------------------------------------
-void DiscordAvatarManager::clearAll()
+void DiscordAvatarManager::clearReplayMappings()
 {
-    m_replay_meta.clear();
-    m_kart_entries.clear();
-}   // clearAll
+    m_replay_controller_names.clear();
+}   // clearReplayMappings
 
 // ----------------------------------------------------------------------------
-void DiscordAvatarManager::clearKartBindings()
+void DiscordAvatarManager::registerUser(const std::string& user_id,
+                                        const std::string& display_name_utf8,
+                                        const std::string& avatar_path)
 {
-    m_kart_entries.clear();
-}   // clearKartBindings
-
-// ----------------------------------------------------------------------------
-void DiscordAvatarManager::registerReplayMeta(const std::string& replay_path,
-                                              const std::string& display_name_utf8,
-                                              const std::string& avatar_path)
-{
-    if (replay_path.empty()) return;
-    Entry e;
-    e.display_name_utf8 = display_name_utf8;
-    e.avatar_path = avatar_path;
-    m_replay_meta[replay_path] = std::move(e);
-}   // registerReplayMeta
-
-// ----------------------------------------------------------------------------
-void DiscordAvatarManager::registerParticipant(const std::string& username_utf8,
-                                               const std::string& display_name_utf8,
-                                               const std::string& avatar_path)
-{
-    if (username_utf8.empty()) return;
-    std::string key = normalizeUsername(username_utf8);
-    Entry e;
-    e.display_name_utf8 = display_name_utf8;
-    e.avatar_path = avatar_path;
-    m_username_meta[key] = std::move(e);
+    if (user_id.empty()) return;
+    UserEntry& e = m_users_by_id[user_id];
+    if (!display_name_utf8.empty())
+    {
+        e.display_name_utf8 = display_name_utf8;
+        e.display_name_wide = StringUtils::utf8ToWide(display_name_utf8);
+    }
+    if (!avatar_path.empty() && avatar_path != e.avatar_path)
+    {
+        e.avatar_path = avatar_path;
+        e.texture = nullptr;
+        e.texture_attempted = false;
+    }
     m_version++;
     Log::info("DiscordAvatarManager",
-              "Registered participant '%s' (display='%s', avatar='%s').",
-              key.c_str(), display_name_utf8.c_str(), avatar_path.c_str());
-}   // registerParticipant
+              "Registered user '%s' (display='%s', avatar='%s').",
+              user_id.c_str(), e.display_name_utf8.c_str(), e.avatar_path.c_str());
+}   // registerUser
 
 // ----------------------------------------------------------------------------
-void DiscordAvatarManager::bindKart(unsigned int world_kart_id,
-                                    const std::string& display_name_utf8,
-                                    const std::string& avatar_path)
+void DiscordAvatarManager::registerReplayControllerName(
+    const std::string& replay_path,
+    const std::string& controller_name_utf8)
 {
-    Entry e;
-    e.display_name_utf8 = display_name_utf8;
-    e.avatar_path = avatar_path;
-    m_kart_entries[world_kart_id] = std::move(e);
-}   // bindKart
+    if (replay_path.empty() || controller_name_utf8.empty()) return;
+    m_replay_controller_names[replay_path] = controller_name_utf8;
+}   // registerReplayControllerName
 
 // ----------------------------------------------------------------------------
-void DiscordAvatarManager::bindKartByUsername(AbstractKart* kart,
-                                              const irr::core::stringw& username,
-                                              bool attach_avatar_billboard)
+irr::core::stringw DiscordAvatarManager::getReplayControllerName(
+    const std::string& replay_path) const
 {
-    if (!kart || username.empty()) return;
-    std::string key = normalizeUsername(StringUtils::wideToUtf8(username));
-    auto it = m_username_meta.find(key);
-    if (it == m_username_meta.end())
+    auto it = m_replay_controller_names.find(replay_path);
+    if (it == m_replay_controller_names.end())
+        return L"";
+    return StringUtils::utf8ToWide(it->second);
+}   // getReplayControllerName
+
+// ----------------------------------------------------------------------------
+std::string DiscordAvatarManager::extractDiscordId(const irr::core::stringw& text)
+{
+    const irr::s32 start = text.find(L"<@");
+    if (start < 0) return "";
+
+    const irr::u32 len = text.size();
+    irr::u32 pos = (irr::u32)start + 2;
+    std::string id;
+    while (pos < len)
     {
-        if (!m_username_meta.empty())
+        wchar_t ch = text[pos];
+        if (ch >= L'0' && ch <= L'9')
         {
-            Log::warn("DiscordAvatarManager",
-                      "No Discord participant metadata matched kart username '%s' (%u registered).",
-                      key.c_str(), (unsigned)m_username_meta.size());
+            id.push_back((char)ch);
+            pos++;
         }
-        return;
-    }
-
-    const Entry& meta = it->second;
-    bindKart(kart->getWorldKartId(), meta.display_name_utf8, meta.avatar_path);
-
-#ifndef SERVER_ONLY
-    if (attach_avatar_billboard && !GUIEngine::isNoGraphics() &&
-        !meta.avatar_path.empty() && kart->getNode())
-    {
-        irr::scene::ISceneNode* avatar_node = irr_driver->addBillboard(
-            irr::core::dimension2d<irr::f32>(0.75f, 0.75f),
-            meta.avatar_path,
-            kart->getNode());
-        if (avatar_node)
+        else if (ch == L'>' && !id.empty())
         {
-            avatar_node->setPosition(irr::core::vector3df(0.0f, 2.35f, 0.0f));
+            return id;
         }
         else
         {
-            Log::warn("DiscordAvatarManager",
-                      "Failed to create 3D avatar billboard for '%s' ('%s').",
-                      key.c_str(), meta.avatar_path.c_str());
+            return "";
         }
     }
-#else
-    (void)attach_avatar_billboard;
-#endif
-}   // bindKartByUsername
+    return "";
+}   // extractDiscordId
 
 // ----------------------------------------------------------------------------
-irr::core::stringw DiscordAvatarManager::getReplayDisplayName(
-    const std::string& replay_path) const
+irr::core::stringw DiscordAvatarManager::resolveMentions(
+    const irr::core::stringw& text) const
 {
-    auto it = m_replay_meta.find(replay_path);
-    if (it == m_replay_meta.end() || it->second.display_name_utf8.empty())
-        return L"";
-    return StringUtils::utf8ToWide(it->second.display_name_utf8);
-}   // getReplayDisplayName
+    if (text.find(L"<@") < 0)
+        return text;
+
+    irr::core::stringw out;
+    const irr::u32 len = text.size();
+    irr::u32 i = 0;
+    while (i < len)
+    {
+        if (i + 2 < len && text[i] == L'<' && text[i + 1] == L'@')
+        {
+            irr::u32 j = i + 2;
+            std::string id;
+            while (j < len && text[j] >= L'0' && text[j] <= L'9')
+            {
+                id.push_back((char)text[j]);
+                j++;
+            }
+            if (!id.empty() && j < len && text[j] == L'>')
+            {
+                auto it = m_users_by_id.find(id);
+                if (it != m_users_by_id.end() && !it->second.display_name_wide.empty())
+                {
+                    out += it->second.display_name_wide;
+                }
+                else
+                {
+                    out += L"Player";
+                }
+                i = j + 1;
+                continue;
+            }
+        }
+        out.append(text[i]);
+        i++;
+    }
+    return out;
+}   // resolveMentions
 
 // ----------------------------------------------------------------------------
-irr::video::ITexture* DiscordAvatarManager::getAvatarTextureForUsername(
-    const irr::core::stringw& username)
+irr::video::ITexture* DiscordAvatarManager::getAvatarTextureForText(
+    const irr::core::stringw& text)
 {
-    if (username.empty()) return nullptr;
-    std::string key = normalizeUsername(StringUtils::wideToUtf8(username));
-    auto it = m_username_meta.find(key);
-    if (it == m_username_meta.end()) return nullptr;
+    std::string id = extractDiscordId(text);
+    if (id.empty()) return nullptr;
+    auto it = m_users_by_id.find(id);
+    if (it == m_users_by_id.end()) return nullptr;
     return resolveTexture(it->second);
-}   // getAvatarTextureForUsername
-
-// ----------------------------------------------------------------------------
-irr::core::stringw DiscordAvatarManager::getDisplayNameForUsername(
-    const irr::core::stringw& username) const
-{
-    if (username.empty()) return L"";
-    std::string key = normalizeUsername(StringUtils::wideToUtf8(username));
-    auto it = m_username_meta.find(key);
-    if (it == m_username_meta.end() || it->second.display_name_utf8.empty())
-        return L"";
-    return StringUtils::utf8ToWide(it->second.display_name_utf8);
-}   // getDisplayNameForUsername
+}   // getAvatarTextureForText
 
 // ----------------------------------------------------------------------------
 irr::video::ITexture* DiscordAvatarManager::getAvatarTextureForKart(
     const AbstractKart* kart)
 {
-    if (!kart) return nullptr;
-    auto it = m_kart_entries.find(kart->getWorldKartId());
-    if (it == m_kart_entries.end()) return nullptr;
-    return resolveTexture(it->second);
+    if (!kart || !kart->getController()) return nullptr;
+    return getAvatarTextureForText(kart->getController()->getName());
 }   // getAvatarTextureForKart
 
 // ----------------------------------------------------------------------------
-irr::core::stringw DiscordAvatarManager::getDisplayNameForKart(
-    const AbstractKart* kart) const
-{
-    if (!kart) return L"";
-    auto it = m_kart_entries.find(kart->getWorldKartId());
-    if (it == m_kart_entries.end() || it->second.display_name_utf8.empty())
-        return L"";
-    return StringUtils::utf8ToWide(it->second.display_name_utf8);
-}   // getDisplayNameForKart
-
-// ----------------------------------------------------------------------------
-void DiscordAvatarManager::attachGhostBillboards(GhostKart* ghost,
-                                                 const std::string& replay_path)
+void DiscordAvatarManager::attachAvatarBillboard(AbstractKart* kart)
 {
 #ifndef SERVER_ONLY
-    if (!ghost || GUIEngine::isNoGraphics()) return;
+    if (!kart || !kart->getController() || !kart->getNode() || GUIEngine::isNoGraphics())
+        return;
 
-    auto it = m_replay_meta.find(replay_path);
-    if (it == m_replay_meta.end()) return;
+    std::string id = extractDiscordId(kart->getController()->getName());
+    if (id.empty()) return;
 
-    const Entry& meta = it->second;
-    bindKart(ghost->getWorldKartId(), meta.display_name_utf8, meta.avatar_path);
+    auto it = m_users_by_id.find(id);
+    if (it == m_users_by_id.end() || it->second.avatar_path.empty())
+        return;
 
-    irr::scene::ISceneNode* parent = ghost->getNode();
-    if (!parent) return;
-
-    // 1. 3D floating name billboard (STKTextBillboard, same style as Kart::setOnScreenText)
-    if (!meta.display_name_utf8.empty())
+    irr::scene::ISceneNode* avatar_node = irr_driver->addBillboard(
+        irr::core::dimension2d<irr::f32>(0.75f, 0.75f),
+        it->second.avatar_path,
+        kart->getNode());
+    if (avatar_node)
     {
-        irr::core::stringw wide_name = StringUtils::utf8ToWide(meta.display_name_utf8);
+        avatar_node->setPosition(irr::core::vector3df(0.0f, 2.35f, 0.0f));
+    }
+    else
+    {
+        Log::warn("DiscordAvatarManager",
+                  "Failed to create 3D avatar billboard for user '%s' ('%s').",
+                  id.c_str(), it->second.avatar_path.c_str());
+    }
+#else
+    (void)kart;
+#endif
+}   // attachAvatarBillboard
+
+// ----------------------------------------------------------------------------
+void DiscordAvatarManager::attachGhostBillboards(GhostKart* ghost)
+{
+#ifndef SERVER_ONLY
+    if (!ghost || !ghost->getController() || !ghost->getNode() || GUIEngine::isNoGraphics())
+        return;
+
+    irr::core::stringw name = ghost->getController()->getName();
+    if (!name.empty())
+    {
         BoldFace* bold_face = font_manager->getFont<BoldFace>();
         if (bold_face && GUIEngine::getSkin())
         {
             STKTextBillboard* tb = new STKTextBillboard(
                 GUIEngine::getSkin()->getColor("font::bottom"),
                 GUIEngine::getSkin()->getColor("font::top"),
-                parent, irr_driver->getSceneManager(), -1,
+                ghost->getNode(), irr_driver->getSceneManager(), -1,
                 irr::core::vector3df(0.0f, 1.55f, 0.0f),
                 irr::core::vector3df(0.45f, 0.45f, 0.45f));
             if (CVS->isGLSL())
-                tb->init(wide_name, bold_face);
+                tb->init(name, bold_face);
             else
-                tb->initLegacy(wide_name, bold_face);
+                tb->initLegacy(name, bold_face);
             tb->drop();
         }
     }
 
-    // 2. 3D circular Discord avatar billboard stacked cleanly above the name
-    if (!meta.avatar_path.empty())
-    {
-        irr::scene::ISceneNode* avatar_node = irr_driver->addBillboard(
-            irr::core::dimension2d<irr::f32>(0.75f, 0.75f),
-            meta.avatar_path,
-            parent);
-        if (avatar_node)
-        {
-            avatar_node->setPosition(irr::core::vector3df(0.0f, 2.35f, 0.0f));
-        }
-        else
-        {
-            Log::warn("DiscordAvatarManager",
-                      "Failed to create 3D ghost avatar billboard for '%s' ('%s').",
-                      replay_path.c_str(), meta.avatar_path.c_str());
-        }
-    }
+    attachAvatarBillboard(ghost);
 #else
     (void)ghost;
-    (void)replay_path;
 #endif
 }   // attachGhostBillboards
 
@@ -313,13 +293,13 @@ void DiscordAvatarManager::attachGhostBillboards(GhostKart* ghost,
 extern "C"
 {
 
-EMSCRIPTEN_KEEPALIVE void stk_discord_register_participant(
-    const char* username_utf8,
+EMSCRIPTEN_KEEPALIVE void stk_discord_register_user(
+    const char* user_id,
     const char* display_name_utf8,
     const char* avatar_path)
 {
-    DiscordAvatarManager::get()->registerParticipant(
-        username_utf8 ? std::string(username_utf8) : std::string(),
+    DiscordAvatarManager::get()->registerUser(
+        user_id ? std::string(user_id) : std::string(),
         display_name_utf8 ? std::string(display_name_utf8) : std::string(),
         avatar_path ? std::string(avatar_path) : std::string());
 }

@@ -223,13 +223,18 @@ void WasmTimeTrialBridge::parsePreparedJson(const std::string& json)
     extractJsonBool(json, "reverse", rev);
 
     std::vector<std::string> ghosts;
+    std::vector<std::string> ghost_user_ids;
     std::vector<std::string> ghost_names;
     std::vector<std::string> ghost_avatars;
+    std::vector<std::string> ghost_is_self;
+    extractJsonString(json, "self_user_id", m_self_user_id);
     extractJsonString(json, "self_name", m_self_name);
     extractJsonString(json, "self_avatar", m_self_avatar);
     extractJsonStringArray(json, "ghost_files", ghosts);
+    extractJsonStringArray(json, "ghost_user_ids", ghost_user_ids);
     extractJsonStringArray(json, "ghost_names", ghost_names);
     extractJsonStringArray(json, "ghost_avatars", ghost_avatars);
+    extractJsonStringArray(json, "ghost_is_self", ghost_is_self);
 
     m_challenge_id = cid;
     m_track = track;
@@ -237,8 +242,10 @@ void WasmTimeTrialBridge::parsePreparedJson(const std::string& json)
     m_laps = std::max(1, std::min(20, laps));
     m_reverse = rev;
     m_ghost_files = std::move(ghosts);
+    m_ghost_user_ids = std::move(ghost_user_ids);
     m_ghost_names = std::move(ghost_names);
     m_ghost_avatars = std::move(ghost_avatars);
+    m_ghost_is_self = std::move(ghost_is_self);
     m_challenge_mode = true;
 
     Log::info("WasmTimeTrialBridge",
@@ -284,7 +291,13 @@ void WasmTimeTrialBridge::startChallengeRace()
 
     ReplayPlay* rp = ReplayPlay::get();
     rp->clearReplayFileList();
-    DiscordAvatarManager::get()->clearAll();
+    DiscordAvatarManager::get()->clearReplayMappings();
+
+    if (!m_self_user_id.empty())
+    {
+        DiscordAvatarManager::get()->registerUser(
+            m_self_user_id, m_self_name, m_self_avatar);
+    }
 
     std::vector<unsigned int> active_indices;
     unsigned int failed_count = 0;
@@ -294,11 +307,24 @@ void WasmTimeTrialBridge::startChallengeRace()
         if (rp->addReplayFile(path, /*custom_replay*/ true))
         {
             active_indices.push_back(rp->getNumReplayFile() - 1);
+            std::string uid = i < m_ghost_user_ids.size() ? m_ghost_user_ids[i] : "";
             std::string name = i < m_ghost_names.size() ? m_ghost_names[i] : "";
             std::string avatar = i < m_ghost_avatars.size() ? m_ghost_avatars[i] : "";
-            if (!name.empty() || !avatar.empty())
+            bool is_self = i < m_ghost_is_self.size() && m_ghost_is_self[i] == "1";
+            if (!uid.empty())
             {
-                DiscordAvatarManager::get()->registerReplayMeta(path, name, avatar);
+                DiscordAvatarManager::get()->registerUser(uid, name, avatar);
+                std::string controller_name = "<@" + uid + ">";
+                if (is_self)
+                    controller_name += " (PB)";
+                DiscordAvatarManager::get()->registerReplayControllerName(
+                    path, controller_name);
+            }
+            else if (!name.empty())
+            {
+                std::string controller_name = is_self ? (name + " (PB)") : name;
+                DiscordAvatarManager::get()->registerReplayControllerName(
+                    path, controller_name);
             }
         }
         else
@@ -453,16 +479,21 @@ void WasmTimeTrialBridge::onGhostsReady(uint32_t req_id, int http_status,
 
     if (http_status == 200 && !json.empty())
     {
+        extractJsonString(json, "self_user_id", m_self_user_id);
         extractJsonString(json, "self_name", m_self_name);
         extractJsonString(json, "self_avatar", m_self_avatar);
         std::vector<std::string> ghosts;
         if (extractJsonStringArray(json, "ghost_files", ghosts))
         {
             m_ghost_files = std::move(ghosts);
+            m_ghost_user_ids.clear();
             m_ghost_names.clear();
             m_ghost_avatars.clear();
+            m_ghost_is_self.clear();
+            extractJsonStringArray(json, "ghost_user_ids", m_ghost_user_ids);
             extractJsonStringArray(json, "ghost_names", m_ghost_names);
             extractJsonStringArray(json, "ghost_avatars", m_ghost_avatars);
+            extractJsonStringArray(json, "ghost_is_self", m_ghost_is_self);
         }
     }
 

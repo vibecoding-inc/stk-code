@@ -1030,15 +1030,9 @@ void NetworkingLobby::updatePlayers()
             StringUtils::toString(player.m_online_id) + "_" +
             StringUtils::toString(player.m_local_player_id);
         core::stringw player_name = player.m_user_name;
-        core::stringw discord_display =
-            DiscordAvatarManager::get()->getDisplayNameForUsername(player.m_user_name);
-        if (!discord_display.empty())
-        {
-            player_name = discord_display;
-        }
         int icon_id = player.m_icon_id;
         video::ITexture* discord_avatar =
-            DiscordAvatarManager::get()->getAvatarTextureForUsername(player.m_user_name);
+            DiscordAvatarManager::get()->getAvatarTextureForText(player.m_user_name);
         if (discord_avatar && m_icon_bank)
         {
             auto it = m_avatar_sprite_ids.find(discord_avatar);
