@@ -189,3 +189,139 @@ export function create_discord_avatar_cache({
     },
   };
 }
+
+const text_encoder = new TextEncoder();
+
+function push_participant_to_cpp(module, get_heap_u8, {username, display_name, avatar_path}) {
+  if (!module || typeof module._stk_discord_register_participant !== "function") {
+    return false;
+  }
+  let alloc = module._stk_tt_alloc || module._malloc;
+  let free = module._stk_tt_free || module._free;
+  if (typeof alloc !== "function") return false;
+
+  let u_bytes = text_encoder.encode(String(username || ""));
+  let d_bytes = text_encoder.encode(String(display_name || ""));
+  let a_bytes = text_encoder.encode(String(avatar_path || ""));
+
+  let u_ptr = alloc(u_bytes.length + 1);
+  let d_ptr = alloc(d_bytes.length + 1);
+  let a_ptr = alloc(a_bytes.length + 1);
+  if (!u_ptr || !d_ptr || !a_ptr) {
+    if (typeof free === "function") {
+      if (u_ptr) free(u_ptr);
+      if (d_ptr) free(d_ptr);
+      if (a_ptr) free(a_ptr);
+    }
+    return false;
+  }
+
+  try {
+    let heap = typeof get_heap_u8 === "function" ? get_heap_u8() : get_heap_u8;
+    heap.set(u_bytes, u_ptr);
+    heap[u_ptr + u_bytes.length] = 0;
+    heap.set(d_bytes, d_ptr);
+    heap[d_ptr + d_bytes.length] = 0;
+    heap.set(a_bytes, a_ptr);
+    heap[a_ptr + a_bytes.length] = 0;
+    module._stk_discord_register_participant(u_ptr, d_ptr, a_ptr);
+    return true;
+  }
+  finally {
+    if (typeof free === "function") {
+      free(u_ptr);
+      free(d_ptr);
+      free(a_ptr);
+    }
+  }
+}
+
+/**
+ * Keeps Discord Activity multiplayer participants' display names and circular
+ * avatars synced into Emscripten MEMFS and C++'s DiscordAvatarManager.
+ *
+ * Uses `discordSdk.commands.getInstanceConnectedParticipants()` for initial
+ * state and subscribes to `ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE` for live joins.
+ */
+export function create_participant_avatar_sync({
+  avatar_cache,
+  get_discord_sdk = () => globalThis.discordSdk || null,
+  get_discord_auth = () => globalThis.discordAuth || null,
+  get_module = () => (typeof Module !== "undefined" ? Module : null),
+  get_heap_u8 = () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (typeof Module !== "undefined" ? Module.HEAPU8 : null)),
+  logger = console,
+} = {}) {
+  let entries_by_username = new Map();
+  let subscribed = false;
+
+  async function sync_users(users) {
+    if (!Array.isArray(users) || !avatar_cache) return;
+    await Promise.all(
+      users.map(async (u) => {
+        if (!u || !u.id || !u.username) return;
+        let username = String(u.username);
+        let display_name = String(u.nickname || u.global_name || u.username);
+        let avatar_path = (await avatar_cache.ensureAvatar({
+          user_id: String(u.id),
+          avatar: u.avatar ? String(u.avatar) : null,
+        })) || "";
+
+        let entry = {username, display_name, avatar_path};
+        entries_by_username.set(username.toLowerCase(), entry);
+        push_participant_to_cpp(get_module(), get_heap_u8, entry);
+      })
+    );
+  }
+
+  return {
+    async start() {
+      let auth = get_discord_auth();
+      if (auth && auth.user) {
+        await sync_users([auth.user]);
+      }
+
+      let sdk = get_discord_sdk();
+      if (!sdk) return;
+
+      if (sdk.commands && typeof sdk.commands.getInstanceConnectedParticipants === "function") {
+        try {
+          let res = await sdk.commands.getInstanceConnectedParticipants();
+          if (res && Array.isArray(res.participants)) {
+            await sync_users(res.participants);
+          }
+        }
+        catch (err) {
+          logger.warn("getInstanceConnectedParticipants failed:", err);
+        }
+      }
+
+      if (!subscribed && typeof sdk.subscribe === "function") {
+        subscribed = true;
+        try {
+          sdk.subscribe("ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE", (evt) => {
+            if (evt && Array.isArray(evt.participants)) {
+              sync_users(evt.participants).catch((err) => {
+                logger.warn("Participant avatar update failed:", err);
+              });
+            }
+          });
+        }
+        catch (err) {
+          subscribed = false;
+          logger.warn("Subscribe to ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE failed:", err);
+        }
+      }
+    },
+
+    flushToWasm() {
+      let mod = get_module();
+      for (let entry of entries_by_username.values()) {
+        push_participant_to_cpp(mod, get_heap_u8, entry);
+      }
+    },
+
+    _getEntries() {
+      return entries_by_username;
+    },
+  };
+}

@@ -9,7 +9,10 @@ import {
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
 import { create_scoreboard_sharer, is_discord_share_available } from "/discord-share.js";
 import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
-import { create_discord_avatar_cache } from "/discord-avatars.js";
+import {
+  create_discord_avatar_cache,
+  create_participant_avatar_sync,
+} from "/discord-avatars.js";
 import { create_time_trials_bridge } from "/time-trials.js";
 import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
@@ -631,6 +634,18 @@ async function main() {
     get_fs: () => (typeof FS !== "undefined" ? FS : null),
     logger: console,
   });
+
+  globalThis.stkDiscordParticipants = create_participant_avatar_sync({
+    avatar_cache: globalThis.stkDiscordAvatars,
+    get_discord_sdk: () => globalThis.discordSdk || null,
+    get_discord_auth: () => globalThis.discordAuth || null,
+    get_module: () => Module,
+    get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
+    logger: console,
+  });
+  // Kick off background sync of connected Discord Activity participants so
+  // multiplayer lobby & in-race avatars are ready as soon as STK boots.
+  globalThis.stkDiscordParticipants.start().catch(() => {});
 
   globalThis.stkTimeTrials = create_time_trials_bridge({
     fetch_impl: (...args) => fetch(...args),

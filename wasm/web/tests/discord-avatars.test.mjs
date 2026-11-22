@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   build_discord_avatar_url,
   create_discord_avatar_cache,
+  create_participant_avatar_sync,
   default_avatar_index,
 } from "../discord-avatars.js";
 
@@ -63,4 +64,82 @@ test("create_discord_avatar_cache fetches, caches, and falls back to default ava
   let path2 = await cache.ensureAvatar({user_id: "999999999999999999", avatar: "stale_hash"});
   assert.equal(path2, path1);
   assert.equal(requested.length, 2);
+});
+
+test("create_participant_avatar_sync syncs connected participants and live updates to WASM", async () => {
+  let fs = create_mock_fs();
+  let heap = new Uint8Array(8192);
+  let next_ptr = 64;
+  let decoder = new TextDecoder();
+  let registered = [];
+  let read_cstr = (ptr) => {
+    let end = ptr;
+    while (end < heap.length && heap[end] !== 0) end++;
+    return decoder.decode(heap.subarray(ptr, end));
+  };
+
+  let mock_module = {
+    _stk_tt_alloc(n) {
+      let p = next_ptr;
+      next_ptr += n + 8;
+      return p;
+    },
+    _stk_tt_free() {},
+    _stk_discord_register_participant(u_ptr, d_ptr, a_ptr) {
+      registered.push({
+        username: read_cstr(u_ptr),
+        display_name: read_cstr(d_ptr),
+        avatar_path: read_cstr(a_ptr),
+      });
+    },
+  };
+
+  let cache = create_discord_avatar_cache({
+    fetch_impl: async () => new Response(new Uint8Array([137, 80, 78, 71]), {status: 200}),
+    get_fs: () => fs,
+    crop_impl: async (blob) => new Uint8Array(await blob.arrayBuffer()),
+    cdn_base: "/.proxy/discord-cdn",
+  });
+
+  let update_handler = null;
+  let mock_sdk = {
+    commands: {
+      async getInstanceConnectedParticipants() {
+        return {
+          participants: [
+            {id: "111", username: "alice", global_name: "Alice!", avatar: "hash1"},
+          ],
+        };
+      },
+    },
+    subscribe(event_name, cb) {
+      if (event_name === "ACTIVITY_INSTANCE_PARTICIPANTS_UPDATE") {
+        update_handler = cb;
+      }
+    },
+  };
+
+  let sync = create_participant_avatar_sync({
+    avatar_cache: cache,
+    get_discord_sdk: () => mock_sdk,
+    get_discord_auth: () => null,
+    get_module: () => mock_module,
+    get_heap_u8: () => heap,
+  });
+
+  await sync.start();
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].username, "alice");
+  assert.equal(registered[0].display_name, "Alice!");
+  assert.equal(registered[0].avatar_path, "/tmp/discord_avatars/111.png");
+
+  // Simulate a second player joining live
+  update_handler({
+    participants: [
+      {id: "111", username: "alice", global_name: "Alice!", avatar: "hash1"},
+      {id: "222", username: "bob", nickname: "Bobby", avatar: "hash2"},
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(registered.some((r) => r.username === "bob" && r.display_name === "Bobby"));
 });
