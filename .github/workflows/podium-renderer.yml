@@ -105,7 +105,7 @@ jobs:
 
       - name: Render 3D podium & all kart poses in headless Blender (on cache miss)
         if: steps.assets-cache.outputs.cache-hit != 'true'
-        run: wasm/podium-renderer/assets-gen/generate.sh --samples 32
+        run: wasm/podium-renderer/assets-gen/generate.sh --samples 64
 
       - name: Upload generated podium assets artifact
         uses: actions/upload-artifact@v7

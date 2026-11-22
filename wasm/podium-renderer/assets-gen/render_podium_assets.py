@@ -84,7 +84,7 @@ def parse_args():
     p.add_argument("--karts", default="", help="Comma-separated kart IDs to render (empty = all)")
     p.add_argument("--only-podium", action="store_true", help="Only render podium.png and layout.json")
     p.add_argument("--skip-podium", action="store_true", help="Skip podium.png render")
-    p.add_argument("--samples", type=int, default=32, help="Cycles render samples (default: 32)")
+    p.add_argument("--samples", type=int, default=64, help="Cycles render samples (default: 64)")
     return p.parse_args(argv)
 
 
@@ -95,9 +95,10 @@ def reset_scene(samples):
     scene.cycles.device = "CPU"
     scene.cycles.samples = samples
     scene.cycles.use_adaptive_sampling = True
-    scene.cycles.adaptive_threshold = 0.02
-    # Ubuntu's headless Blender package is built without OpenImageDenoise.
-    scene.cycles.use_denoising = False
+    scene.cycles.adaptive_threshold = 0.01
+    scene.cycles.use_denoising = True
+    scene.cycles.denoiser = "OPENIMAGEDENOISE"
+    scene.cycles.denoising_input_passes = "RGB_ALBEDO_NORMAL"
     scene.cycles.max_bounces = 4
     scene.cycles.diffuse_bounces = 2
     scene.cycles.glossy_bounces = 2

@@ -418,11 +418,11 @@ def load_kart_into_blender(kart_dir, shared_texture_dirs=()):
                 )
             )
 
-    # Optional static attachments (headlights / exhausts) if present as .spm
-    for group_tag in ("headlights", "speed-weighted-objects"):
-        group_node = root.find(group_tag)
-        if group_node is None:
-            continue
+    # Optional static attachments (exhausts/spoilers) if present as .spm.
+    # Intentionally skip <headlights> because STK uses headlight meshes for
+    # night-time light-beam cones (which render as opaque dark cones in daylight).
+    group_node = root.find("speed-weighted-objects")
+    if group_node is not None:
         for idx, child in enumerate(group_node):
             c_model = child.attrib.get("model")
             if not c_model or not c_model.lower().endswith(".spm"):
@@ -434,7 +434,7 @@ def load_kart_into_blender(kart_dir, shared_texture_dirs=()):
             objects.extend(
                 import_spm_to_blender(
                     c_path,
-                    f"{kart_id}_{group_tag}_{idx}",
+                    f"{kart_id}_speed_weighted_{idx}",
                     search_dirs,
                     mat_xml_info,
                     location=pos,
