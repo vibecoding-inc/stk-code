@@ -10,6 +10,7 @@ import {
   get_track,
   get_difficulty_name,
   format_time_ms,
+  format_kart_name,
 } from "./tracks.mjs";
 
 const MAX_REPLAY_BYTES = 512 * 1024; // 512 KiB gzipped
@@ -196,7 +197,7 @@ export function build_challenge_embed(challenge, {entries, total_players}) {
   else {
     let lines = top.map((e) => {
       let prefix = e.rank <= 3 ? MEDALS[e.rank - 1] : `\`#${e.rank}\``;
-      return `${prefix} **${e.display_name}** — \`${format_time_ms(e.time_ms)}\` (${e.kart})`;
+      return `${prefix} **${e.display_name}** — \`${format_time_ms(e.time_ms)}\` (${format_kart_name(e.kart)})`;
     });
     description = lines.join("\n");
   }
@@ -426,7 +427,7 @@ async function announce_new_first_place({
     delta_text = ` (−${diff_s}s)`;
   }
 
-  let content = `🏆 **New 1st Place on ${track_name}!** <@${user_id}> (${display_name}) set **${format_time_ms(time_ms)}**${delta_text} with **${kart}**!`;
+  let content = `🏆 **New 1st Place on ${track_name}!** <@${user_id}> set **${format_time_ms(time_ms)}**${delta_text} with **${format_kart_name(kart)}**!`;
   let payload = {
     content,
     allowed_mentions: {users: []},

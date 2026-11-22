@@ -35,6 +35,40 @@ export const DIFFICULTY_NAMES = [
   "SuperTux",
 ];
 
+export const KART_NAMES = {
+  adiumy: "Adiumy",
+  amanda: "Amanda",
+  beastie: "Beastie",
+  emule: "eMule",
+  gavroche: "Gavroche",
+  gnu: "Gnu",
+  hexley: "Hexley",
+  kiki: "Kiki",
+  konqi: "Konqi",
+  nolok: "Nolok",
+  pepper: "Pepper",
+  pidgin: "Pidgin",
+  puffy: "Puffy",
+  sara_the_racer: "Sara the Racer",
+  sara_the_wizard: "Sara the Wizard",
+  suzanne: "Suzanne",
+  tux: "Tux",
+  wilber: "Wilber",
+  xue: "Xue",
+};
+
+export function format_kart_name(kart_id) {
+  let raw = String(kart_id || "").trim();
+  if (!raw) return "Unknown Kart";
+  let lower = raw.toLowerCase();
+  if (KART_NAMES[lower]) return KART_NAMES[lower];
+  return raw
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 export const DEFAULT_LAPS = 3;
 export const MIN_LAPS = 1;
 export const MAX_LAPS = 20;
