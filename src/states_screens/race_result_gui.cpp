@@ -28,6 +28,7 @@
 #include "config/stk_config.hpp"
 #include "config/user_config.hpp"
 #include "graphics/2dutils.hpp"
+#include "graphics/irr_driver.hpp"
 #include "graphics/material.hpp"
 #include "guiengine/engine.hpp"
 #include "guiengine/message_queue.hpp"
@@ -74,10 +75,21 @@
 
 #include <algorithm>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 /** Constructor, initialises internal data structures.
  */
 RaceResultGUI::RaceResultGUI() : Screen("race_result.stkgui",
-    /*pause race*/ false)
+    /*pause race*/ false),
+    m_share_capture_pending(false),
+    m_saved_result_box_height(0),
+    m_saved_display_fps(false),
+    m_saved_left_visible(false),
+    m_saved_middle_visible(false),
+    m_saved_right_visible(false),
+    m_saved_share_visible(false)
 {
 }   // RaceResultGUI
 
@@ -93,11 +105,14 @@ void RaceResultGUI::init()
     m_animation_state = RR_INIT;
 
     m_timer = 0;
+    m_share_capture_pending = false;
 
     getWidget("operations")->setActive(false);
     getWidget("left")->setVisible(false);
     getWidget("middle")->setVisible(false);
     getWidget("right")->setVisible(false);
+    if (GUIEngine::Widget* share = getWidget("share"))
+        share->setVisible(false);
 
     m_started_race_over_music = false;
     music_manager->stopMusic();
@@ -212,6 +227,11 @@ void RaceResultGUI::init()
 //-----------------------------------------------------------------------------
 void RaceResultGUI::tearDown()
 {
+    if (m_share_capture_pending)
+    {
+        irr_driver->setPostRenderCallback(nullptr);
+        restoreShareCaptureState();
+    }
     Screen::tearDown();
     //m_font->setMonospaceDigits(m_was_monospace);
 
@@ -276,6 +296,7 @@ void RaceResultGUI::enableAllButtons()
         left->setLabel(_("Quit the server"));
         left->setImage("gui/icons/main_quit.png");
         left->setVisible(true);
+        updateShareButton();
         return;
     }
 
@@ -359,7 +380,108 @@ void RaceResultGUI::enableAllButtons()
         }
         left->setVisible(true);
     }
+    updateShareButton();
 }   // enableAllButtons
+
+//-----------------------------------------------------------------------------
+void RaceResultGUI::updateShareButton()
+{
+    GUIEngine::IconButtonWidget *share = getWidget<GUIEngine::IconButtonWidget>("share");
+    if (!share)
+        return;
+
+#ifdef __EMSCRIPTEN__
+    int discord_available = EM_ASM_INT({
+        return (typeof globalThis.stkIsDiscordShareAvailable === "function" &&
+                globalThis.stkIsDiscordShareAvailable()) ? 1 : 0;
+    });
+    share->setLabel(discord_available ? _("Share") : _("Save PNG"));
+    share->setImage("gui/icons/save.png");
+    share->setVisible(true);
+#else
+    share->setVisible(false);
+#endif
+}   // updateShareButton
+
+//-----------------------------------------------------------------------------
+void RaceResultGUI::triggerShareScoreboard()
+{
+#ifdef __EMSCRIPTEN__
+    if (m_share_capture_pending)
+        return;
+
+    m_share_capture_pending = true;
+
+    GUIEngine::Widget* left = getWidget("left");
+    GUIEngine::Widget* middle = getWidget("middle");
+    GUIEngine::Widget* right = getWidget("right");
+    GUIEngine::Widget* share = getWidget("share");
+    m_saved_left_visible = left ? left->isVisible() : false;
+    m_saved_middle_visible = middle ? middle->isVisible() : false;
+    m_saved_right_visible = right ? right->isVisible() : false;
+    m_saved_share_visible = share ? share->isVisible() : false;
+
+    if (GUIEngine::Widget* operations = getWidget("operations"))
+        operations->setVisible(false);
+
+    GUIEngine::Widget* result_box = getWidget("result-box");
+    GUIEngine::Widget* result_table = getWidget("result-table");
+    if (result_box && result_table)
+    {
+        m_saved_result_box_height = result_box->m_h;
+        int top_pad = std::max(0, result_table->m_y - result_box->m_y);
+        result_box->m_h = (result_table->m_y + result_table->m_h) - result_box->m_y + top_pad;
+    }
+
+    m_saved_display_fps = UserConfigParams::m_display_fps;
+    UserConfigParams::m_display_fps = false;
+
+    irr_driver->setPostRenderCallback([this]() {
+        finishShareScoreboard();
+    });
+#endif
+}   // triggerShareScoreboard
+
+//-----------------------------------------------------------------------------
+void RaceResultGUI::finishShareScoreboard()
+{
+#ifdef __EMSCRIPTEN__
+    EM_ASM({
+        if (typeof globalThis.stkShareScoreboard === "function") {
+            globalThis.stkShareScoreboard();
+        }
+    });
+#endif
+    restoreShareCaptureState();
+}   // finishShareScoreboard
+
+//-----------------------------------------------------------------------------
+void RaceResultGUI::restoreShareCaptureState()
+{
+    if (!m_share_capture_pending)
+        return;
+
+    if (GUIEngine::Widget* result_box = getWidget("result-box"))
+    {
+        if (m_saved_result_box_height > 0)
+            result_box->m_h = m_saved_result_box_height;
+    }
+    m_saved_result_box_height = 0;
+
+    if (GUIEngine::Widget* operations = getWidget("operations"))
+        operations->setVisible(true);
+    if (GUIEngine::Widget* left = getWidget("left"))
+        left->setVisible(m_saved_left_visible);
+    if (GUIEngine::Widget* middle = getWidget("middle"))
+        middle->setVisible(m_saved_middle_visible);
+    if (GUIEngine::Widget* right = getWidget("right"))
+        right->setVisible(m_saved_right_visible);
+    if (GUIEngine::Widget* share = getWidget("share"))
+        share->setVisible(m_saved_share_visible);
+
+    UserConfigParams::m_display_fps = m_saved_display_fps;
+    m_share_capture_pending = false;
+}   // restoreShareCaptureState
 
 //-----------------------------------------------------------------------------
 void RaceResultGUI::eventCallback(GUIEngine::Widget* widget,
@@ -389,11 +511,19 @@ void RaceResultGUI::eventCallback(GUIEngine::Widget* widget,
         const std::string& action =
             getWidget<GUIEngine::RibbonWidget>("operations")->getSelectionIDString(PLAYER_ID_GAME_MASTER);
 
+        if (action == "share")
+        {
+            triggerShareScoreboard();
+            return;
+        }
+
         // User pressed "Continue" button, go from race results to overall GP results
         if (m_animation_state == RR_WAITING_GP_RESULT && action == "middle")
         {
             GUIEngine::IconButtonWidget *middle = getWidget<GUIEngine::IconButtonWidget>("middle");
             middle->setVisible(false);
+            if (GUIEngine::Widget* share = getWidget("share"))
+                share->setVisible(false);
             getWidget("operations")->setActive(false);
             m_all_row_infos = m_all_row_info_waiting;
             m_animation_state = RR_OLD_GP_RESULTS;
@@ -1157,6 +1287,7 @@ void RaceResultGUI::renderGlobal(float dt)
             middle->setImage("gui/icons/green_check.png");
             middle->setVisible(true);
             operations->select("middle", PLAYER_ID_GAME_MASTER);
+            updateShareButton();
         }
         break;
     case RR_WAITING_GP_RESULT:

@@ -13,6 +13,7 @@
 
 import { handleTokenExchange } from "./token.mjs";
 import { handleTelemetry } from "./telemetry.mjs";
+import { handleShareAttachment } from "./share-attachment.mjs";
 
 export default {
   async fetch(request, env, ctx) {
@@ -23,6 +24,10 @@ export default {
         return new Response("Method Not Allowed", {status: 405});
       }
       return handleTokenExchange({request, env});
+    }
+
+    if (url.pathname === "/api/share-attachment") {
+      return handleShareAttachment({request, env});
     }
 
     if (url.pathname === "/api/telemetry") {

@@ -2195,6 +2195,13 @@ void IrrDriver::update(float dt, bool is_loading)
 
     if (m_request_screenshot) doScreenShot();
 
+    if (m_post_render_callback)
+    {
+        auto cb = std::move(m_post_render_callback);
+        m_post_render_callback = nullptr;
+        cb();
+    }
+
     // Enable this next print statement to get render information printed
     // E.g. number of triangles rendered, culled etc. The stats is only
     // printed while the race is running and not while the in-game menu

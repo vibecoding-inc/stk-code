@@ -3,6 +3,7 @@ import jsUntar from "/vendor/js-untar.esm.js";
 import { DiscordSDK } from "/vendor/discord-embedded-app-sdk.esm.js";
 import { init_discord_activity } from "/discord-activity.js";
 import { get_discord_username, provision_discord_profile } from "/discord-profile.js";
+import { create_scoreboard_sharer, is_discord_share_available } from "/discord-share.js";
 import { create_lan_bridge, resolve_ws_url } from "/lan-bridge.js";
 import { init_telemetry, collect_environment_diagnostics, recommend_quality } from "/telemetry.js";
 
@@ -731,6 +732,16 @@ Module["canvas"].addEventListener("webglcontextrestored", () => {
 globalThis.main = main;
 globalThis.sync_idbfs = sync_idbfs;
 globalThis.load_idbfs = load_idbfs;
+
+let scoreboard_sharer = create_scoreboard_sharer({
+  get_canvas: () => Module["canvas"],
+  global_scope: globalThis,
+  fetch_impl: (...args) => fetch(...args),
+  logger: console,
+  on_lifecycle: (event_name, details) => log_lifecycle(event_name, details),
+});
+globalThis.stkShareScoreboard = () => scoreboard_sharer.capture_and_share();
+globalThis.stkIsDiscordShareAvailable = () => is_discord_share_available(globalThis);
 
 // Initialize telemetry immediately on module load (before waiting for
 // Emscripten's runtime to become ready) so any early abort or wasm-instantiate

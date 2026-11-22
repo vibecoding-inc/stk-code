@@ -221,6 +221,18 @@ private:
     void drawTeamScorers(KartTeam team, int x, int y, int height);
     void displayBenchmarkSummary();
     void displayScreenShots();
+    void updateShareButton();
+    void triggerShareScoreboard();
+    void finishShareScoreboard();
+    void restoreShareCaptureState();
+
+    bool m_share_capture_pending;
+    int  m_saved_result_box_height;
+    bool m_saved_display_fps;
+    bool m_saved_left_visible;
+    bool m_saved_middle_visible;
+    bool m_saved_right_visible;
+    bool m_saved_share_visible;
 
     int  getFontHeight () const;
 

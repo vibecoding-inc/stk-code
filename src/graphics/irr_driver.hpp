@@ -35,6 +35,7 @@
 #include "utils/no_copy.hpp"
 #include "utils/ptr_vector.hpp"
 #include "utils/vec3.hpp"
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -163,6 +164,7 @@ private:
     void                 createListOfVideoModes();
 
     bool                 m_request_screenshot;
+    std::function<void()> m_post_render_callback;
 
     bool                 m_ssaoviz;
     bool                 m_shadowviz;
@@ -200,7 +202,11 @@ private:
     // ------------------------------------------------------------------------
     void resizeWindow();
 public:
-    void doScreenShot();    
+    void doScreenShot();
+    void setPostRenderCallback(std::function<void()> cb)
+    {
+        m_post_render_callback = std::move(cb);
+    }
 public:
          IrrDriver();
         ~IrrDriver();
