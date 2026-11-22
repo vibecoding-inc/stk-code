@@ -55,6 +55,7 @@ function get_interaction_user(interaction) {
     user_id: String(u.id),
     username: String(u.username || "Player"),
     display_name: String(nick || u.global_name || u.username || "Player"),
+    avatar: u.avatar ? String(u.avatar) : null,
   };
 }
 

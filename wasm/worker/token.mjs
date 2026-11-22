@@ -112,6 +112,7 @@ export async function handleTokenExchange({request, env, fetch_impl = fetch}) {
               user_id: String(user.id),
               username: String(user.username || "Player"),
               display_name,
+              avatar: user.avatar ? String(user.avatar) : null,
             });
           }
 

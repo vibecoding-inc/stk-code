@@ -61,11 +61,12 @@ function create_mock_db() {
         pb.reverse === (reverse ? 1 : 0) &&
         scope_members.has(`${scope_type}|${scope_id}|${pb.user_id}`)
       ) {
-        let u = users.get(pb.user_id) || {username: "Player", display_name: "Player"};
+        let u = users.get(pb.user_id) || {username: "Player", display_name: "Player", avatar: null};
         rows.push({
           user_id: pb.user_id,
           display_name: u.display_name,
           username: u.username,
+          avatar: u.avatar || null,
           run_id: pb.run_id,
           kart: pb.kart,
           kart_color: pb.kart_color,
@@ -90,8 +91,15 @@ function create_mock_db() {
         },
         async run() {
           if (norm.startsWith("INSERT INTO users")) {
-            let [user_id, username, display_name, updated_at] = bound;
-            users.set(user_id, {user_id, username, display_name, updated_at});
+            let [user_id, username, display_name, avatar, updated_at] = bound;
+            let prev = users.get(user_id);
+            users.set(user_id, {
+              user_id,
+              username,
+              display_name,
+              avatar: avatar || (prev && prev.avatar) || null,
+              updated_at,
+            });
           }
           else if (norm.startsWith("INSERT INTO scope_members")) {
             let [scope_type, scope_id, user_id] = bound;

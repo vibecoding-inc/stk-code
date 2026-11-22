@@ -52,20 +52,22 @@ export async function authenticate_session(request, env) {
   return {claims};
 }
 
-export async function upsert_user(db, {user_id, username, display_name}, now = Date.now()) {
+export async function upsert_user(db, {user_id, username, display_name, avatar = null}, now = Date.now()) {
   if (!db || !user_id) return;
   let safe_username = String(username || "Player").slice(0, 64);
   let safe_display = String(display_name || safe_username).slice(0, 64);
+  let safe_avatar = typeof avatar === "string" && avatar.trim() ? avatar.trim().slice(0, 128) : null;
   await db
     .prepare(
-      `INSERT INTO users (user_id, username, display_name, updated_at)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO users (user_id, username, display_name, avatar, updated_at)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          username = excluded.username,
          display_name = excluded.display_name,
+         avatar = COALESCE(excluded.avatar, users.avatar),
          updated_at = excluded.updated_at`
     )
-    .bind(user_id, safe_username, safe_display, now)
+    .bind(user_id, safe_username, safe_display, safe_avatar, now)
     .run();
 }
 
@@ -92,7 +94,7 @@ export async function query_scope_leaderboard(
 ) {
   let rows_result = await db
     .prepare(
-      `SELECT u.user_id, u.display_name, u.username,
+      `SELECT u.user_id, u.display_name, u.username, u.avatar,
               p.run_id, p.kart, p.kart_color, p.time_ms, p.updated_at
        FROM scope_members sm
        INNER JOIN user_pbs p
@@ -130,6 +132,7 @@ export async function query_scope_leaderboard(
     run_id: row.run_id,
     user_id: row.user_id,
     display_name: row.display_name || row.username || "Player",
+    avatar: row.avatar || null,
     kart: row.kart,
     kart_color: typeof row.kart_color === "number" ? row.kart_color : 0,
     time_ms: Number(row.time_ms),
@@ -486,7 +489,7 @@ async function handleGetChallenge({request, env, challenge_id}) {
   if (!caller_in_top) {
     let my_pb = await env.TIME_TRIALS_DB
       .prepare(
-        `SELECT u.user_id, u.display_name, u.username,
+        `SELECT u.user_id, u.display_name, u.username, u.avatar,
                 p.run_id, p.kart, p.kart_color, p.time_ms, p.updated_at
          FROM user_pbs p
          INNER JOIN users u ON u.user_id = p.user_id
@@ -501,6 +504,7 @@ async function handleGetChallenge({request, env, challenge_id}) {
         run_id: my_pb.run_id,
         user_id: my_pb.user_id,
         display_name: my_pb.display_name || my_pb.username || "Player",
+        avatar: my_pb.avatar || null,
         kart: my_pb.kart,
         kart_color: typeof my_pb.kart_color === "number" ? my_pb.kart_color : 0,
         time_ms: Number(my_pb.time_ms),
@@ -525,6 +529,7 @@ async function handleGetChallenge({request, env, challenge_id}) {
       run_id: g.run_id,
       user_id: g.user_id,
       display_name: g.display_name,
+      avatar: g.avatar || null,
       kart: g.kart,
       time_ms: g.time_ms,
       url: `/api/timetrials/runs/${encodeURIComponent(g.run_id)}/replay`,
