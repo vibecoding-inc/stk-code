@@ -113,6 +113,7 @@ private:
     virtual void onTextUpdated() OVERRIDE {}
     virtual bool onEnterPressed(const irr::core::stringw& text) OVERRIDE;
     void updatePlayerPings();
+    int resolvePlayerIconId(const LobbyPlayer& player, irr::core::stringw& display_name);
 
 public:
 

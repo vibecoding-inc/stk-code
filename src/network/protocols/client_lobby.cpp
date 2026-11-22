@@ -931,7 +931,7 @@ void ClientLobby::becomingServerOwner()
 
     SFXManager::get()->quickSound("wee");
     //I18N: Display when a player is allow to control the server
-    core::stringw msg = _("You are now the owner of server.");
+    core::stringw msg = _("You are now the server owner.");
     MessageQueue::add(MessageQueue::MT_GENERIC, msg);
 }   // becomingServerOwner
 

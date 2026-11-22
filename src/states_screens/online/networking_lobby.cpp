@@ -784,12 +784,42 @@ void NetworkingLobby::onUpdate(float delta)
 }   // onUpdate
 
 // ----------------------------------------------------------------------------
+int NetworkingLobby::resolvePlayerIconId(const LobbyPlayer& player,
+                                         core::stringw& display_name)
+{
+    int icon_id = player.m_icon_id;
+    video::ITexture* discord_avatar =
+        DiscordAvatarManager::get()->getAvatarTextureForText(player.m_user_name);
+    if (discord_avatar && m_icon_bank)
+    {
+        auto it = m_avatar_sprite_ids.find(discord_avatar);
+        if (it == m_avatar_sprite_ids.end())
+        {
+            int new_idx = m_icon_bank->addTextureAsSprite(discord_avatar);
+            m_avatar_sprite_ids[discord_avatar] = new_idx;
+            icon_id = new_idx;
+        }
+        else
+        {
+            icon_id = it->second;
+        }
+        // Keep host indication visible when the crown icon is replaced by the avatar
+        if (player.m_icon_id == 0)
+        {
+            display_name += L" [Host]";
+        }
+    }
+    return icon_id;
+}   // resolvePlayerIconId
+
+// ----------------------------------------------------------------------------
 void NetworkingLobby::updatePlayerPings()
 {
     auto peer_pings = STKHost::get()->getPeerPings();
     for (auto& p : m_player_names)
     {
         core::stringw name_with_ping = p.second.m_user_name;
+        int icon_id = resolvePlayerIconId(p.second, name_with_ping);
         const core::stringw& flag = StringUtils::getCountryFlag(
             p.second.m_country_code);
         if (!flag.empty())
@@ -814,7 +844,7 @@ void NetworkingLobby::updatePlayerPings()
         int id = m_player_list->getItemID(p.first);
         if (id != -1)
         {
-            m_player_list->renameItem(id, name_with_ping, p.second.m_icon_id);
+            m_player_list->renameItem(id, name_with_ping, icon_id);
             // Don't show chosen team color for spectator
             if (p.second.isSpectator())
                 m_player_list->markItemRed(id, false/*red*/);
@@ -1030,28 +1060,7 @@ void NetworkingLobby::updatePlayers()
             StringUtils::toString(player.m_online_id) + "_" +
             StringUtils::toString(player.m_local_player_id);
         core::stringw player_name = player.m_user_name;
-        int icon_id = player.m_icon_id;
-        video::ITexture* discord_avatar =
-            DiscordAvatarManager::get()->getAvatarTextureForText(player.m_user_name);
-        if (discord_avatar && m_icon_bank)
-        {
-            auto it = m_avatar_sprite_ids.find(discord_avatar);
-            if (it == m_avatar_sprite_ids.end())
-            {
-                int new_idx = m_icon_bank->addTextureAsSprite(discord_avatar);
-                m_avatar_sprite_ids[discord_avatar] = new_idx;
-                icon_id = new_idx;
-            }
-            else
-            {
-                icon_id = it->second;
-            }
-            // Keep host indication visible when the crown icon is replaced by the avatar
-            if (player.m_icon_id == 0)
-            {
-                player_name += L" [Host]";
-            }
-        }
+        int icon_id = resolvePlayerIconId(player, player_name);
         const core::stringw& flag = StringUtils::getCountryFlag(
             player.m_country_code);
         if (!flag.empty())
