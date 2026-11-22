@@ -144,8 +144,20 @@ void OptionsScreenLanguage::eventCallback(Widget* widget, const std::string& nam
 
         translations = new Translations();
 
-        // Reload fonts for new translation
-        GUIEngine::getStateManager()->hardResetAndGoToScreen<MainMenuScreen>();
+        // Reload fonts for new translation without dumping back to MainMenuScreen
+        // when opened from an active race pause dialog.
+        bool in_race = StateManager::get()->hasRaceInStack();
+        if (in_race)
+        {
+            if (GUIEngine::getCurrentScreen())
+                GUIEngine::getCurrentScreen()->tearDown();
+            GUIEngine::clearScreenCache();
+            StateManager::get()->enterGameState();
+        }
+        else
+        {
+            GUIEngine::getStateManager()->hardResetAndGoToScreen<MainMenuScreen>();
+        }
 
         font_manager->getFont<BoldFace>()->reset();
         font_manager->getFont<RegularFace>()->reset();

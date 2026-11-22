@@ -172,9 +172,8 @@ bool TracksScreen::onEscapePressed()
 {
     if (m_quit_server)
     {
-        // Remove this screen
-        StateManager::get()->popMenu();
-        STKHost::get()->shutdown();
+        // Discord Activity: never allow quitting the server via Escape.
+        return false;
     }
     else if (NetworkConfig::get()->isNetworking())
     {

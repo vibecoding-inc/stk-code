@@ -386,6 +386,13 @@ void KartSelectionScreen::init()
     Screen::init();
     m_must_delete_on_back = false;
 
+    if (Widget* back_btn = getWidget("back"))
+    {
+        bool hide_back = WasmTimeTrialBridge::get()->isChallengeMode();
+        back_btn->setVisible(!hide_back);
+        back_btn->setActive(!hide_back);
+    }
+
     RibbonWidget* tabs = getWidget<RibbonWidget>("kartgroups");
     assert( tabs != NULL );
     tabs->select(UserConfigParams::m_last_used_kart_group,
@@ -1243,6 +1250,8 @@ void KartSelectionScreen::eventCallback(Widget* widget,
     }
     else if (name == "back")
     {
+        if (WasmTimeTrialBridge::get()->isChallengeMode())
+            return;
         StateManager::get()->escapePressed();
     }
     else

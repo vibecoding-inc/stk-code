@@ -272,7 +272,8 @@ void AbstractStateManager::resetAndGoToScreen(Screen* screen)
         Log::info("AbstractStateManager::resetAndGoToScreen", "Switching to screen %s",
             name.c_str());
 
-    if (m_game_mode.load() != GAME) getCurrentScreen()->tearDown();
+    if (m_game_mode.load() != GAME && !m_menu_stack.empty() && getCurrentScreen())
+        getCurrentScreen()->tearDown();
     m_menu_stack.clear();
 
     if (!screen->isLoaded()) screen->loadFromFile();
@@ -311,3 +312,31 @@ void AbstractStateManager::resetAndSetStack(Screen* screens[])
 
     onTopMostScreenChanged();
 }   // resetAndSetStack
+
+// ----------------------------------------------------------------------------
+
+std::string AbstractStateManager::getStackSummary() const
+{
+    if (m_menu_stack.empty())
+        return "<empty>";
+    std::string out;
+    for (size_t i = 0; i < m_menu_stack.size(); i++)
+    {
+        if (i > 0)
+            out += " -> ";
+        out += m_menu_stack[i].first;
+    }
+    return out;
+}   // getStackSummary
+
+// ----------------------------------------------------------------------------
+
+bool AbstractStateManager::hasRaceInStack() const
+{
+    for (const auto& entry : m_menu_stack)
+    {
+        if (entry.first == RACE_STATE_NAME)
+            return true;
+    }
+    return false;
+}   // hasRaceInStack

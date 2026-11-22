@@ -29,18 +29,10 @@ let idbfs_mount = null;
 let data_version = 1;
 
 let start_button = document.getElementById("start_button");
-let secondary_start_button = document.getElementById("secondary_start_button");
+let discord_unavailable_warning = document.getElementById("discord_unavailable_warning");
 let player_badge = document.getElementById("player_badge");
 let player_badge_text = document.getElementById("player_badge_text");
 let status_text = document.getElementById("status_text");
-
-// Avoid layout jump on load: when inside a Discord Activity iframe, show both
-// action buttons in their disabled state right away instead of shifting from
-// one button to two after initialization finishes.
-if (new URLSearchParams(window.location.search).has("frame_id")) {
-  if (start_button) start_button.textContent = "Join Activity Lobby";
-  if (secondary_start_button) secondary_start_button.classList.add("is-visible");
-}
 let info_container = document.getElementById("info_container");
 let loading_spinner = document.getElementById("loading_spinner");
 let progress_fill = document.getElementById("progress_fill");
@@ -597,11 +589,6 @@ async function main() {
       idbfs_skipped: true,
     });
   }
-  else {
-    set_loading_state({text: "Restoring saved profile...", indeterminate: true, spinning: true});
-    await load_idbfs();
-    log_lifecycle("idbfs_mounted");
-  }
   if (config.ws_enabled) {
     set_websocket_url(config.ws_proxy);
   }
@@ -640,6 +627,58 @@ async function main() {
     get_heap_u8: () => (typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8)),
     logger: console,
   });
+
+  function call_reconnect_cpp_str(fn_name, req_id, arg1, text) {
+    try {
+      let alloc = Module && Module._stk_reconnect_alloc;
+      let free = Module && Module._stk_reconnect_free;
+      let fn = Module && Module[fn_name];
+      let heap = typeof HEAPU8 !== "undefined" ? HEAPU8 : (Module && Module.HEAPU8);
+      if (typeof fn !== "function") return;
+      if (!text) {
+        if (arg1 === undefined) fn(req_id, 0);
+        else fn(req_id, arg1, 0);
+        return;
+      }
+      if (typeof alloc !== "function" || typeof free !== "function" || !heap) return;
+      let bytes = new TextEncoder().encode(String(text));
+      let ptr = alloc(bytes.length + 1);
+      if (!ptr) return;
+      try {
+        heap.set(bytes, ptr);
+        heap[ptr + bytes.length] = 0;
+        if (arg1 === undefined) fn(req_id, ptr);
+        else fn(req_id, arg1, ptr);
+      }
+      finally {
+        free(ptr);
+      }
+    }
+    catch (err) {
+      console.warn("[lan-bridge] reconnect callback failed:", err);
+    }
+  }
+
+  globalThis.stkReconnectLanBridge = (req_id) => {
+    if (!globalThis.stkLanBridge || typeof globalThis.stkLanBridge.reconnect !== "function") {
+      call_reconnect_cpp_str("_stk_reconnect_on_done", req_id, 0, "Discord multiplayer bridge is unavailable.");
+      return;
+    }
+    log_lifecycle("lan_reconnect_start", {req_id});
+    globalThis.stkLanBridge.reconnect({
+      on_status: (st) => {
+        call_reconnect_cpp_str("_stk_reconnect_on_status", req_id, undefined, st);
+      },
+    }).then(() => {
+      log_lifecycle("lan_reconnect_ready", {req_id});
+      call_reconnect_cpp_str("_stk_reconnect_on_done", req_id, 1, "");
+    }).catch((err) => {
+      let msg = err && err.message ? err.message : String(err);
+      log_lifecycle("lan_reconnect_failed", {req_id, error: msg});
+      if (telemetry) telemetry.flush();
+      call_reconnect_cpp_str("_stk_reconnect_on_done", req_id, 0, msg);
+    });
+  };
 
   globalThis.stkDiscordAvatars = create_discord_avatar_cache({
     fetch_impl: (...args) => fetch(...args),
@@ -697,44 +736,51 @@ async function main() {
     let label = pending_tt.track_name || pending_tt.track || "Time Trial";
     start_button.textContent = `Play Time Trial — ${label}`;
     start_button.onclick = () => start_game({connect_to_lobby: false, time_trial: pending_tt});
-    if (secondary_start_button) {
-      secondary_start_button.classList.remove("is-visible");
-    }
+    start_button.disabled = false;
+    set_loading_state({
+      text: `Time Trial ready: ${pending_tt.track_name || pending_tt.track} (${pending_tt.laps} ${pending_tt.laps === 1 ? "lap" : "laps"})`,
+      percent: 100,
+      indeterminate: false,
+      spinning: false,
+    });
   }
   else if (can_auto_join_lobby) {
     start_button.textContent = "Join Activity Lobby";
     start_button.onclick = () => start_game({connect_to_lobby: true});
-    if (secondary_start_button) {
-      secondary_start_button.classList.add("is-visible");
-      secondary_start_button.disabled = false;
-      secondary_start_button.onclick = () => start_game({connect_to_lobby: false});
-    }
+    start_button.disabled = false;
+    set_loading_state({
+      text: "Ready to race! Choose texture quality and join your Discord Activity lobby.",
+      percent: 100,
+      indeterminate: false,
+      spinning: false,
+    });
   }
   else {
-    start_button.textContent = "Start Game";
-    start_button.onclick = () => start_game({connect_to_lobby: false});
-    if (secondary_start_button) {
-      secondary_start_button.classList.remove("is-visible");
+    start_button.disabled = true;
+    start_button.hidden = true;
+    for (let btn of quality_buttons) btn.disabled = true;
+    if (discord_unavailable_warning) {
+      discord_unavailable_warning.hidden = false;
     }
+    set_loading_state({
+      text: "Discord connection unavailable.",
+      percent: 0,
+      indeterminate: false,
+      spinning: false,
+    });
+    log_lifecycle("discord_unavailable", {
+      has_frame_id: new URLSearchParams(window.location.search).has("frame_id"),
+      has_auth: Boolean(globalThis.discordAuth && globalThis.discordAuth.user),
+      has_token: Boolean(globalThis.discordAccessToken),
+      has_instance_id: Boolean(globalThis.discordSdk && globalThis.discordSdk.instanceId),
+    });
   }
-  start_button.disabled = false;
-  set_loading_state({
-    text: pending_tt
-      ? `Time Trial ready: ${pending_tt.track_name || pending_tt.track} (${pending_tt.laps} ${pending_tt.laps === 1 ? "lap" : "laps"})`
-      : can_auto_join_lobby
-        ? "Ready to race! Join your Discord Activity lobby or open the main menu."
-        : "Ready to race! Choose texture quality and press Start Game.",
-    percent: 100,
-    indeterminate: false,
-    spinning: false,
-  });
   if (telemetry) telemetry.flush();
 }
 
 async function start_game({connect_to_lobby = false, time_trial = null} = {}) {
   game_started = true;
   start_button.disabled = true;
-  if (secondary_start_button) secondary_start_button.disabled = true;
   for (let btn of quality_buttons) btn.disabled = true;
   set_loading_state({text: "Loading game files...", indeterminate: true, spinning: true});
   if (telemetry) {
@@ -832,9 +878,6 @@ async function start_game({connect_to_lobby = false, time_trial = null} = {}) {
       spinning: false,
     });
     start_button.disabled = false;
-    if (secondary_start_button && secondary_start_button.classList.contains("is-visible")) {
-      secondary_start_button.disabled = false;
-    }
     for (let btn of quality_buttons) btn.disabled = false;
   }
 }

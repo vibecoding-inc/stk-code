@@ -19,6 +19,7 @@
 
 #include "states_screens/main_menu_screen.hpp"
 
+#include "states_screens/online/activity_reconnect_screen.hpp"
 #include "addons/news_manager.hpp"
 #include "challenges/story_mode_timer.hpp"
 #include "challenges/unlock_manager.hpp"
@@ -84,6 +85,8 @@ using namespace Online;
 
 MainMenuScreen::MainMenuScreen() : Screen("main_menu.stkgui")
 {
+    m_user_id = NULL;
+    m_activity_guard_pending = false;
 }   // MainMenuScreen
 
 // ----------------------------------------------------------------------------
@@ -140,6 +143,15 @@ void MainMenuScreen::beforeAddingWidget()
 void MainMenuScreen::init()
 {
     Screen::init();
+
+#ifdef __EMSCRIPTEN__
+    // Discord Activity: MainMenuScreen is never supposed to be accessible.
+    // Defer actual transition to the first onUpdate() tick to avoid re-entering
+    // StateManager mid-transition, and log/recover cleanly.
+    m_activity_guard_stack = StateManager::get()->getStackSummary();
+    m_activity_guard_pending = true;
+    return;
+#endif
 
     m_user_id = getWidget<ButtonWidget>("user-id");
     assert(m_user_id);
@@ -259,6 +271,15 @@ void MainMenuScreen::init()
 
 void MainMenuScreen::onUpdate(float delta)
 {
+#ifdef __EMSCRIPTEN__
+    if (m_activity_guard_pending)
+    {
+        m_activity_guard_pending = false;
+        ActivityReconnectScreen::recoverFromForbiddenScreen(
+            "main_menu.stkgui", m_activity_guard_stack);
+        return;
+    }
+#endif
 #ifndef SERVER_ONLY
     NewsManager::get()->joinDownloadThreadIfExit();
 

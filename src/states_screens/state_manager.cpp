@@ -31,6 +31,7 @@
 #include "main_loop.hpp"
 #include "modes/world.hpp"
 #include "modes/profile_world.hpp"
+#include "states_screens/online/activity_reconnect_screen.hpp"
 #include "utils/log.hpp"
 #include "utils/stk_process.hpp"
 
@@ -249,6 +250,13 @@ void StateManager::onTopMostScreenChanged()
 
 void StateManager::onStackEmptied()
 {
+#ifdef __EMSCRIPTEN__
+    if (!main_loop->isAborted())
+    {
+        ActivityReconnectScreen::recoverFromForbiddenScreen("<empty-stack>", "<empty>");
+        return;
+    }
+#endif
     GUIEngine::cleanUp();
     GUIEngine::deallocate();
     main_loop->abort();

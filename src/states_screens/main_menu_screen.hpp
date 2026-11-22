@@ -20,6 +20,8 @@
 
 #include "guiengine/screen.hpp"
 
+#include <string>
+
 namespace GUIEngine { class Widget;       class ListWidget; 
                       class ButtonWidget; class IconButtonWidget;
                       class STKModifiedSpriteBank; }
@@ -37,6 +39,9 @@ private:
     GUIEngine::ButtonWidget *m_user_id;
 
     core::stringw m_news_text;
+
+    bool m_activity_guard_pending;
+    std::string m_activity_guard_stack;
 
     MainMenuScreen();
 public:

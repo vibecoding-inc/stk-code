@@ -37,6 +37,8 @@ export function create_lan_bridge({
   let status_listeners = [];
   let tx_logged = false;
   let rx_logged = false;
+  let last_close_code = null;
+  let last_close_reason = "";
 
   function emit_status(status) {
     for (let fn of status_listeners) {
@@ -171,10 +173,12 @@ export function create_lan_bridge({
         logger.warn("[lan-bridge] WebSocket error:", err);
       });
 
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (ev) => {
         if (ws !== socket) return;
         let was_ready = ready;
-        logger.log("[lan-bridge] WebSocket closed.");
+        last_close_code = ev && typeof ev.code === "number" ? ev.code : null;
+        last_close_reason = ev && typeof ev.reason === "string" ? ev.reason : "";
+        logger.log(`[lan-bridge] WebSocket closed (code=${last_close_code}, reason=${last_close_reason || "none"}).`);
         reset_socket_state(was_ready ? null : new Error("Connection to multiplayer gateway closed before ready."));
       });
 
@@ -284,9 +288,36 @@ export function create_lan_bridge({
     return rx_queue.length > 0;
   }
 
+  function reconnect({on_status} = {}) {
+    if (ws) {
+      let old_ws = ws;
+      reset_socket_state(new Error("Reconnecting to multiplayer gateway."));
+      try {
+        old_ws.close();
+      }
+      catch {}
+    }
+    rx_queue = [];
+    tx_logged = false;
+    rx_logged = false;
+    return preconnect({on_status});
+  }
+
+  function getState() {
+    return {
+      connected: Boolean(ws && ready && ws.readyState === 1),
+      ready,
+      readyState: ws ? ws.readyState : -1,
+      lastCloseCode: last_close_code,
+      lastCloseReason: last_close_reason,
+    };
+  }
+
   return {
     isAvailable,
     preconnect,
+    reconnect,
+    getState,
     open,
     close,
     send,

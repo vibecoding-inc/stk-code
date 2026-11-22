@@ -319,9 +319,9 @@ void RaceResultGUI::enableAllButtons()
         right->setVisible(true);
         operations->select("right", PLAYER_ID_GAME_MASTER);
         middle->setVisible(false);
-        left->setLabel(_("Quit the server"));
-        left->setImage("gui/icons/main_quit.png");
-        left->setVisible(true);
+        // Discord Activity: never allow quitting the server to main menu.
+        left->setVisible(false);
+        left->setFocusable(false);
         updateShareButton();
         return;
     }
@@ -587,19 +587,6 @@ void RaceResultGUI::eventCallback(GUIEngine::Widget* widget,
                 if (cl)
                     cl->doneWithResults();
                 getWidget<GUIEngine::IconButtonWidget>("right")->setLabel(_("Waiting for others"));
-            }
-            if (action == "left") // Quit server (return to online lan / wan menu)
-            {
-                RaceManager::get()->clearNetworkGrandPrixResult();
-                if (STKHost::existHost())
-                {
-                    STKHost::get()->shutdown();
-                }
-                RaceManager::get()->exitRace();
-                RaceManager::get()->setAIKartOverride("");
-                StateManager::get()->resetAndSetStack(
-                    NetworkConfig::get()->getResetScreens().data());
-                NetworkConfig::get()->unsetNetworking();
             }
             return;
         }

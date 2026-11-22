@@ -52,6 +52,7 @@
 #include "states_screens/dialogs/server_info_dialog.hpp"
 #include "states_screens/online/server_selection.hpp"
 #include "states_screens/main_menu_screen.hpp"
+#include "states_screens/online/activity_reconnect_screen.hpp"
 #include "states_screens/state_manager.hpp"
 #include "utils/profiler.hpp"
 #include "utils/string_utils.hpp"
@@ -517,6 +518,7 @@ void MainLoop::run()
             GUIEngine::ModalDialog::dismiss();
             GUIEngine::ScreenKeyboard::dismiss();
 
+            bool had_world = (World::getWorld() != NULL);
             if (World::getWorld())
             {
                 RaceManager::get()->clearNetworkGrandPrixResult();
@@ -534,6 +536,24 @@ void MainLoop::run()
 
             if (exist_host == true)
             {
+#ifdef __EMSCRIPTEN__
+                if (!m_request_abort && !GUIEngine::isNoGraphics())
+                {
+                    bool auto_reconnect =
+                        ActivityReconnectScreen::shouldAutoReconnect(msg);
+                    ActivityReconnectScreen::logDisconnectTelemetry(
+                        msg, had_world, auto_reconnect);
+                    NetworkConfig::get()->unsetNetworking();
+                    ActivityReconnectScreen::getInstance()->configure(
+                        msg, auto_reconnect, /*fatal_reload_only*/ false);
+                    StateManager::get()->resetAndGoToScreen(
+                        ActivityReconnectScreen::getInstance());
+                }
+                else
+                {
+                    NetworkConfig::get()->unsetNetworking();
+                }
+#else
                 if (!GUIEngine::isNoGraphics())
                 {
                     StateManager::get()->resetAndSetStack(
@@ -553,6 +573,7 @@ void MainLoop::run()
                 }
                 else
                     NetworkConfig::get()->unsetNetworking();
+#endif
             }
 
             if (m_request_abort)

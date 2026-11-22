@@ -138,3 +138,51 @@ test("preconnect emits starting_server status and resolves on ok:true", async ()
 
   assert.deepEqual(statuses, ["connecting", "authenticating", "starting_server", "ready"]);
 });
+
+test("reconnect closes stale socket, clears rx_queue, and establishes a fresh connection", async () => {
+  MockWebSocket.instances = [];
+  let heap = new Uint8Array(16);
+  let statuses = [];
+  let bridge = create_lan_bridge({
+    get_url: () => "wss://123.discordsays.com/api/lan",
+    get_credentials: () => ({access_token: "tok", instance_id: "i-1-gc-2-3"}),
+    get_heap_u8: () => heap,
+    WebSocketImpl: MockWebSocket,
+    logger: {log() {}, warn() {}},
+  });
+
+  let p1 = bridge.preconnect();
+  let sock1 = MockWebSocket.instances[0];
+  sock1.readyState = 1;
+  sock1.emit("open");
+  sock1.emit("message", {data: JSON.stringify({ok: true, instance_id: "i-1-gc-2-3"})});
+  await p1;
+
+  // Queue a stale incoming datagram and check getState().
+  sock1.emit("message", {data: new Uint8Array([42]).buffer});
+  assert.equal(bridge.hasPending(1), true);
+  assert.equal(bridge.getState().connected, true);
+
+  let p2 = bridge.reconnect({on_status: (s) => statuses.push(s)});
+  assert.equal(sock1.closed, true);
+  assert.equal(bridge.hasPending(1), false);
+  assert.equal(MockWebSocket.instances.length, 2);
+
+  let sock2 = MockWebSocket.instances[1];
+  sock2.readyState = 1;
+  sock2.emit("open");
+  sock2.emit("message", {data: JSON.stringify({status: "waiting_for_server"})});
+  sock2.emit("message", {data: JSON.stringify({ok: true, instance_id: "i-1-gc-2-3"})});
+  await p2;
+
+  assert.deepEqual(statuses, ["connecting", "authenticating", "waiting_for_server", "ready"]);
+  assert.equal(bridge.getState().connected, true);
+
+  // Close with code/reason updates getState() diagnostics.
+  sock2.readyState = 3;
+  sock2.emit("close", {code: 1006, reason: "server_restarted"});
+  let st = bridge.getState();
+  assert.equal(st.connected, false);
+  assert.equal(st.lastCloseCode, 1006);
+  assert.equal(st.lastCloseReason, "server_restarted");
+});

@@ -40,9 +40,11 @@
 #include "network/network_config.hpp"
 #include "network/network_string.hpp"
 #include "network/stk_host.hpp"
+#include "online/wasm_time_trial_bridge.hpp"
 #include "race/race_manager.hpp"
 #include "states_screens/help/help_screen_1.hpp"
 #include "states_screens/main_menu_screen.hpp"
+#include "states_screens/offline_kart_selection.hpp"
 #include "states_screens/race_gui_base.hpp"
 #include "states_screens/race_gui_multitouch.hpp"
 #include "states_screens/race_setup_screen.hpp"
@@ -139,22 +141,31 @@ RacePausedDialog::RacePausedDialog(const float percentWidth,
             getWidget<IconButtonWidget>("backbtn")->setLabel(_("Back to Battle"));
             if (!NetworkConfig::get()->isNetworking())
             {
-                getWidget<IconButtonWidget>("newrace")->setLabel(_("Setup New Game"));
+                if (getWidget<IconButtonWidget>("newrace"))
+                    getWidget<IconButtonWidget>("newrace")->setLabel(_("Setup New Game"));
                 if (getWidget<IconButtonWidget>("restart"))
                     getWidget<IconButtonWidget>("restart")->setLabel(_("Restart Battle"));
             }
-            getWidget<IconButtonWidget>("exit")->setLabel(_("Exit Battle"));
+            if (getWidget<IconButtonWidget>("exit"))
+                getWidget<IconButtonWidget>("exit")->setLabel(_("Exit Battle"));
         }
         else
         {
             getWidget<IconButtonWidget>("backbtn")->setLabel(_("Back to Race"));
             if (!NetworkConfig::get()->isNetworking())
             {
-                getWidget<IconButtonWidget>("newrace")->setLabel(_("Setup New Race"));
+                if (getWidget<IconButtonWidget>("newrace"))
+                {
+                    getWidget<IconButtonWidget>("newrace")->setLabel(
+                        WasmTimeTrialBridge::get()->isChallengeMode()
+                            ? _("Change Kart")
+                            : _("Setup New Race"));
+                }
                 if (getWidget<IconButtonWidget>("restart"))
                     getWidget<IconButtonWidget>("restart")->setLabel(_("Restart Race"));
             }
-            getWidget<IconButtonWidget>("exit")->setLabel(_("Exit Race"));
+            if (getWidget<IconButtonWidget>("exit"))
+                getWidget<IconButtonWidget>("exit")->setLabel(_("Exit Race"));
         }
     }
     
@@ -222,6 +233,15 @@ void RacePausedDialog::loadedFromFile()
         {
             choice_ribbon->deleteChild("restart");
         }
+    }
+
+    // Discord Activity: never allow quitting the server or exiting to main menu.
+    if (NetworkConfig::get()->isNetworking() ||
+        WasmTimeTrialBridge::get()->isChallengeMode())
+    {
+        GUIEngine::RibbonWidget* choice_ribbon =
+            getWidget<GUIEngine::RibbonWidget>("choiceribbon");
+        choice_ribbon->deleteChild("exit");
     }
 
     // Remove all extraneous buttons in benchmark mode
@@ -326,6 +346,11 @@ GUIEngine::EventPropagation
 
         if (selection == "exit")
         {
+            if (NetworkConfig::get()->isNetworking() ||
+                WasmTimeTrialBridge::get()->isChallengeMode())
+            {
+                return GUIEngine::EVENT_BLOCK;
+            }
             bool from_overworld = m_from_overworld;
             ModalDialog::dismiss();
             if (STKHost::existHost())
@@ -389,6 +414,16 @@ GUIEngine::EventPropagation
                 back.setSynchronous(true);
                 back.addUInt8(LobbyProtocol::LE_CLIENT_BACK_LOBBY);
                 STKHost::get()->sendToServer(&back, true);
+            }
+            else if (WasmTimeTrialBridge::get()->isChallengeMode())
+            {
+                World::getWorld()->scheduleUnpause();
+                RaceManager::get()->exitRace();
+                RaceManager::get()->setAIKartOverride("");
+                KartSelectionScreen* s = OfflineKartSelectionScreen::getInstance();
+                s->setMultiplayer(false);
+                s->setFromOverworld(false);
+                StateManager::get()->resetAndGoToScreen(s);
             }
             else
             {

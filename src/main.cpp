@@ -278,6 +278,7 @@ extern "C" {
 #include "online/wasm_time_trial_bridge.hpp"
 #include "states_screens/main_menu_screen.hpp"
 #include "states_screens/offline_kart_selection.hpp"
+#include "states_screens/online/activity_reconnect_screen.hpp"
 #include "states_screens/online/networking_lobby.hpp"
 #include "states_screens/online/register_screen.hpp"
 #include "states_screens/state_manager.hpp"
@@ -2554,6 +2555,16 @@ int main(int argc, char *argv[])
         }
         else if (!UserConfigParams::m_no_start_screen)
         {
+#ifdef __EMSCRIPTEN__
+            ActivityReconnectScreen::logTelemetryError(
+                "startup",
+                "{\"event\":\"no_activity_mode\",\"reason\":\"Launched without STKHost or TimeTrial challenge\"}");
+            ActivityReconnectScreen::getInstance()->configure(
+                _("Discord Activity session was not initialized. Please reload the Activity."),
+                /*auto_reconnect*/ false,
+                /*fatal_reload_only*/ true);
+            ActivityReconnectScreen::getInstance()->push();
+#else
             if (UserConfigParams::m_enforce_current_player)
             {
                 PlayerManager::get()->enforceCurrentPlayer();
@@ -2588,6 +2599,7 @@ int main(int argc, char *argv[])
             }
 #endif
             askForInternetPermission();
+#endif
         }
         else
         {

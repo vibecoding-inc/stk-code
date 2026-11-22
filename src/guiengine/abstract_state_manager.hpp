@@ -130,6 +130,12 @@ namespace GUIEngine
         /** \brief to be called after e.g. a resolution switch */
         void reshowTopMostMenu();
 
+        /** \return human-readable snapshot of the current menu stack (bottom -> top) */
+        std::string getStackSummary() const;
+
+        /** \return true if the menu stack currently contains the in-race state */
+        bool hasRaceInStack() const;
+
         template<typename T>
         void hardResetAndGoToScreen()
         {

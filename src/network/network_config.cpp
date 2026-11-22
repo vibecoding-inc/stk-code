@@ -31,6 +31,7 @@
 #include "network/stun_detection.hpp"
 #include "online/xml_request.hpp"
 #include "states_screens/main_menu_screen.hpp"
+#include "states_screens/online/activity_reconnect_screen.hpp"
 #include "states_screens/online/networking_lobby.hpp"
 #include "states_screens/online/online_lan.hpp"
 #include "states_screens/online/online_profile_servers.hpp"
@@ -206,6 +207,21 @@ void NetworkConfig::setServerDetails(std::shared_ptr<Online::XMLRequest> r,
 std::vector<GUIEngine::Screen*>
     NetworkConfig::getResetScreens(bool lobby) const
 {
+#ifdef __EMSCRIPTEN__
+    if (lobby)
+    {
+        return
+            {
+                NetworkingLobby::getInstance(),
+                nullptr
+            };
+    }
+    return
+        {
+            ActivityReconnectScreen::getInstance(),
+            nullptr
+        };
+#endif
     if (lobby)
     {
         if (isWAN())

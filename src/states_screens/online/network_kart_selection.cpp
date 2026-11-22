@@ -87,11 +87,15 @@ void NetworkKartSelectionScreen::onUpdate(float dt)
 {
     if (StkTime::getMonoTimeMs() > m_exit_timeout)
     {
-        // Reset the screen to networking menu if failed to back to lobby
-        STKHost::get()->shutdown();
-        StateManager::get()->resetAndSetStack(
-            NetworkConfig::get()->getResetScreens().data());
-        NetworkConfig::get()->unsetNetworking();
+        // Route through STKHost::requestShutdown() so main_loop transitions
+        // cleanly to ActivityReconnectScreen instead of MainMenuScreen.
+        m_exit_timeout = std::numeric_limits<uint64_t>::max();
+        if (STKHost::existHost())
+        {
+            STKHost::get()->setErrorMessage(
+                _("Lost connection to server while returning to lobby."));
+            STKHost::get()->requestShutdown();
+        }
         return;
     }
 

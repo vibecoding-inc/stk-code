@@ -309,25 +309,15 @@
         transform: translateY(3px);
         box-shadow: 0 2px 0 #185726, 0 4px 10px rgba(0, 0, 0, 0.35);
       }
-      #secondary_start_button {
-        display: none;
-        padding: 11px 16px;
-        font-size: 14px;
-        border-color: rgba(145, 205, 255, 0.5);
-        background: linear-gradient(180deg, #3ba2f5, var(--stk-blue) 52%, var(--stk-blue-dark));
-        text-shadow: 0 1px 0 rgba(10, 35, 80, 0.7);
-        box-shadow: 0 4px 0 #104278, 0 6px 14px rgba(0, 0, 0, 0.32);
-      }
-      #secondary_start_button.is-visible {
-        display: block;
-      }
-      #secondary_start_button:hover:not(:disabled) {
-        filter: brightness(1.08);
-        transform: translateY(-1px);
-      }
-      #secondary_start_button:active:not(:disabled) {
-        transform: translateY(2px);
-        box-shadow: 0 2px 0 #104278, 0 3px 8px rgba(0, 0, 0, 0.3);
+      #discord_unavailable_warning {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 2px solid var(--stk-red);
+        background: rgba(120, 18, 18, 0.55);
+        color: #fff5f5;
+        font-size: 13px;
+        line-height: 1.45;
       }
       .stk-action-btn:disabled {
         cursor: not-allowed;
@@ -470,8 +460,10 @@
           </div>
 
           <div class="action-stack">
-            <button id="start_button" class="stk-action-btn" type="button" disabled>Start Game</button>
-            <button id="secondary_start_button" class="stk-action-btn" type="button" disabled>Singleplayer / Main Menu</button>
+            <button id="start_button" class="stk-action-btn" type="button" disabled>Join Activity Lobby</button>
+          </div>
+          <div id="discord_unavailable_warning" role="alert" hidden>
+            Discord connection unavailable. Please open SuperTuxKart inside a Discord Activity.
           </div>
 
           <div class="progress-panel" id="progress_panel">

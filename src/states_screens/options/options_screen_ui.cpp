@@ -616,6 +616,7 @@ void OptionsScreenUI::reloadGUIEngine()
             GUIEngine::cleanUp();
         }
 
+        bool in_race = StateManager::get()->hasRaceInStack();
         GUIEngine::clearScreenCache();
 
         if (reload_font)
@@ -626,14 +627,22 @@ void OptionsScreenUI::reloadGUIEngine()
                 StateManager::get(), false/*loading*/);
         }
 
-        Screen* screen_list[] =
-            {
-                MainMenuScreen::getInstance(),
-                OptionsScreenUI::getInstance(),
-                nullptr
-            };
-        GUIEngine::switchToScreen(MainMenuScreen::getInstance());
-        StateManager::get()->resetAndSetStack(screen_list);
+        if (in_race)
+        {
+            StateManager::get()->enterGameState();
+            OptionsScreenUI::getInstance()->push();
+        }
+        else
+        {
+            Screen* screen_list[] =
+                {
+                    MainMenuScreen::getInstance(),
+                    OptionsScreenUI::getInstance(),
+                    nullptr
+                };
+            GUIEngine::switchToScreen(MainMenuScreen::getInstance());
+            StateManager::get()->resetAndSetStack(screen_list);
+        }
         GUIEngine::SpinnerWidget* spinner = OptionsScreenUI::getInstance()
             ->getWidget<GUIEngine::SpinnerWidget>(focus_name.c_str());
         spinner->setFocusForPlayer(PLAYER_ID_GAME_MASTER);

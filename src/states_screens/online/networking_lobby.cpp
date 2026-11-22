@@ -252,6 +252,13 @@ void NetworkingLobby::init()
     m_invite_button->setVisible(can_invite);
     m_invite_button->setActive(can_invite);
 
+    // Discord Activity: never allow leaving the lobby to the main menu.
+    if (m_back_widget)
+    {
+        m_back_widget->setVisible(false);
+        m_back_widget->setActive(false);
+    }
+
     // Connect to server now if we have saved players and not disconnected
     if (!LobbyProtocol::get<LobbyProtocol>() &&
         !NetworkConfig::get()->getNetworkPlayers().empty())
@@ -883,7 +890,7 @@ void NetworkingLobby::eventCallback(Widget* widget, const std::string& name,
 {
     if (name == m_back_widget->m_properties[PROP_ID])
     {
-        StateManager::get()->escapePressed();
+        // Disabled in Discord Activity (cannot leave lobby to main menu).
         return;
     }
     else if (name == m_player_list->m_properties[GUIEngine::PROP_ID])
@@ -1016,15 +1023,8 @@ void NetworkingLobby::tearDown()
 // ----------------------------------------------------------------------------
 bool NetworkingLobby::onEscapePressed()
 {
-    if (NetworkConfig::get()->isAddingNetworkPlayers())
-        NetworkConfig::get()->cleanNetworkPlayers();
-    m_joined_server.reset();
-    m_header_text = _("Lobby");
-    m_header_text_width = 0;
-    input_manager->getDeviceManager()->mapFireToSelect(false);
-    input_manager->getDeviceManager()->setAssignMode(NO_ASSIGN);
-    STKHost::get()->shutdown();
-    return true; // close the screen
+    // Discord Activity: never allow leaving the server lobby via Escape.
+    return false;
 }   // onEscapePressed
 
 // ----------------------------------------------------------------------------
