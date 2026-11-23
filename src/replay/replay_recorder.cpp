@@ -32,6 +32,9 @@
 #include "modes/easter_egg_hunt.hpp"
 #include "modes/linear_world.hpp"
 #include "modes/world.hpp"
+#include "network/network_config.hpp"
+#include "network/network_player_profile.hpp"
+#include "network/rewind_manager.hpp"
 #include "physics/btKart.hpp"
 #include "race/race_manager.hpp"
 #include "tracks/track.hpp"
@@ -116,6 +119,7 @@ void ReplayRecorder::init()
 void ReplayRecorder::update(int ticks)
 {
     if (m_incorrect_replay || m_complete_replay) return;
+    if (RewindManager::get() && RewindManager::get()->isRewinding()) return;
 
     World *world = World::getWorld();
     const bool single_player = RaceManager::get()->getNumPlayers() == 1;
@@ -129,6 +133,9 @@ void ReplayRecorder::update(int ticks)
         if (kart->isEliminated() && single_player) return;
 
         if (kart->isGhostKart()) continue;
+        // Keep replay timestamps strictly monotonic across network rewinds
+        if (m_last_saved_time[i] >= 0.0f && time <= m_last_saved_time[i])
+            continue;
 #ifdef DEBUG
         m_count++;
 #endif
@@ -300,12 +307,23 @@ void ReplayRecorder::update(int ticks)
         else
             r->m_distance = 0.0f;
 
-        kart->getKartGFX()->getGFXStatus(&(r->m_nitro_usage),
-            &(r->m_zipper_usage), &(r->m_skidding_effect), &(r->m_red_skidding));
+        if (kart->getKartGFX())
+        {
+            kart->getKartGFX()->getGFXStatus(&(r->m_nitro_usage),
+                &(r->m_zipper_usage), &(r->m_skidding_effect), &(r->m_red_skidding));
+        }
+        else
+        {
+            r->m_nitro_usage = 0;
+            r->m_zipper_usage = false;
+            r->m_skidding_effect = 0;
+            r->m_red_skidding = false;
+        }
         r->m_jumping = kart->isJumping();
     }   // for i
 
-    if (world->getPhase() == World::RESULT_DISPLAY_PHASE && !m_complete_replay)
+    if (!NetworkConfig::get()->isServer() &&
+        world->getPhase() == World::RESULT_DISPLAY_PHASE && !m_complete_replay)
     {
         m_complete_replay = true;
         save();
@@ -349,52 +367,53 @@ uint64_t ReplayRecorder::computeUID(float min_time)
 }
 
 //-----------------------------------------------------------------------------
-/** Saves the replay data stored in the internal data structures.
+/** Shared replay file writer used by both client save() and server saveToFile().
  */
-void ReplayRecorder::save()
+bool ReplayRecorder::writeReplayFile(bool full_path, float* out_min_time)
 {
-    if (m_incorrect_replay || !m_complete_replay)
-    {
-        MessageQueue::add(MessageQueue::MT_ERROR,
-            _("Incomplete replay file will not be saved."));
-        return;
-    }
+    const World *world = World::getWorld();
+    if (!world || !Track::getCurrentTrack())
+        return false;
 
-#ifdef DEBUG
-    Log::debug("ReplayRecorder", "%d frames, %d removed because of"
-        "frequency compression", m_count, m_count_skipped_time);
-#endif
-    const World *world           = World::getWorld();
     const unsigned int num_karts = world->getNumKarts();
     float min_time = 99999.99f;
+    bool found_finish_time = false;
     for (unsigned int k = 0; k < num_karts; k++)
     {
-        if (world->getKart(k)->isGhostKart()) continue;
-        float cur_time = world->getKart(k)->getFinishTime();
-        if (cur_time < min_time)
+        const AbstractKart *kart = world->getKart(k);
+        if (kart->isGhostKart()) continue;
+        float cur_time = kart->getFinishTime();
+        if (kart->hasFinishedRace() && !kart->isEliminated() && cur_time > 0.0f && cur_time < min_time)
+        {
             min_time = cur_time;
+            found_finish_time = true;
+        }
+    }
+    if (!found_finish_time)
+    {
+        // Fallback for non-linear / all-DNF races so min_time is still valid
+        for (unsigned int k = 0; k < num_karts; k++)
+        {
+            const AbstractKart *kart = world->getKart(k);
+            if (kart->isGhostKart()) continue;
+            float cur_time = kart->getFinishTime();
+            if (cur_time > 0.0f && cur_time < min_time)
+                min_time = cur_time;
+        }
+        if (min_time >= 99999.98f)
+            min_time = std::max(0.0f, world->getTime());
     }
 
-    int day, month, year;
-    StkTime::getDate(&day, &month, &year);
-    std::string time = StringUtils::toString(min_time);
-    std::replace(time.begin(), time.end(), '.', '_');
-    std::ostringstream oss;
-    oss << Track::getCurrentTrack()->getIdent() << "_" << year << month << day
-        << "_" << num_karts << "_" << time << ".replay";
-    m_filename = oss.str();
+    if (out_min_time)
+        *out_min_time = min_time;
 
-    FILE *fd = openReplayFile(/*writeable*/true);
+    FILE *fd = openReplayFile(/*writeable*/true, full_path);
     if (!fd)
     {
         Log::error("ReplayRecorder", "Can't open '%s' for writing - "
             "can't save replay data.", getReplayFilename().c_str());
-        return;
+        return false;
     }
-
-    core::stringw msg = _("Replay saved in \"%s\".",
-        StringUtils::utf8ToWide(file_manager->getReplayDir() + getReplayFilename()));
-    MessageQueue::add(MessageQueue::MT_GENERIC, msg);
 
     fprintf(fd, "version: %d\n", getCurrentReplayVersion());
     fprintf(fd, "stk_version: %s\n", STK_VERSION);
@@ -409,13 +428,23 @@ void ReplayRecorder::save()
         fprintf(fd, "kart: %s %s\n", kart->getIdent().c_str(),
                 StringUtils::xmlEncode(kart->getController()->getName()).c_str());
 
-        if (kart->getController()->isPlayerController())
+        float kart_color = 0.0f;
+        if (auto npp = RaceManager::get()->getKartInfo(real_karts)
+                .getNetworkPlayerProfile().lock())
         {
-            fprintf(fd, "kart_color: %f\n", StateManager::get()->getActivePlayer(player_count)->getConstProfile()->getDefaultKartColor());
+            kart_color = npp->getDefaultKartColor();
+        }
+        else if (kart->getController()->isPlayerController())
+        {
+            if (StateManager::get()->getActivePlayer(player_count) &&
+                StateManager::get()->getActivePlayer(player_count)->getConstProfile())
+            {
+                kart_color = StateManager::get()->getActivePlayer(player_count)
+                    ->getConstProfile()->getDefaultKartColor();
+            }
             player_count++;
         }
-        else
-            fprintf(fd, "kart_color: 0\n");
+        fprintf(fd, "kart_color: %f\n", kart_color);
     }
 
     m_last_uid = computeUID(min_time);
@@ -436,8 +465,10 @@ void ReplayRecorder::save()
     {
         if (world->getKart(k)->isGhostKart()) continue;
 
-        const unsigned int num_transforms = std::min(m_max_frames,
-                                                     m_count_transforms[k]);
+        const unsigned int num_transforms =
+            (k < m_count_transforms.size())
+                ? std::min(m_max_frames, m_count_transforms[k])
+                : 0;
 
         fprintf(fd, "size:     %d\n", num_transforms);
 
@@ -478,6 +509,78 @@ void ReplayRecorder::save()
         }   // for i
     }
     fclose(fd);
+    return true;
+}   // writeReplayFile
+
+//-----------------------------------------------------------------------------
+/** Saves the replay data directly to an explicit full path (for headless servers).
+ */
+bool ReplayRecorder::saveToFile(const std::string& full_path)
+{
+    if (full_path.empty() || !World::getWorld())
+        return false;
+
+    bool has_frames = false;
+    for (unsigned int count : m_count_transforms)
+    {
+        if (count > 0)
+        {
+            has_frames = true;
+            break;
+        }
+    }
+    if (!has_frames)
+        return false;
+
+    m_filename = full_path;
+    bool ok = writeReplayFile(/*full_path*/true);
+    if (ok)
+        m_complete_replay = true;
+    return ok;
+}   // saveToFile
+
+//-----------------------------------------------------------------------------
+/** Saves the replay data stored in the internal data structures.
+ */
+void ReplayRecorder::save()
+{
+    if (m_incorrect_replay || !m_complete_replay)
+    {
+        MessageQueue::add(MessageQueue::MT_ERROR,
+            _("Incomplete replay file will not be saved."));
+        return;
+    }
+
+#ifdef DEBUG
+    Log::debug("ReplayRecorder", "%d frames, %d removed because of"
+        "frequency compression", m_count, m_count_skipped_time);
+#endif
+    const World *world           = World::getWorld();
+    const unsigned int num_karts = world->getNumKarts();
+    float min_time = 99999.99f;
+    for (unsigned int k = 0; k < num_karts; k++)
+    {
+        if (world->getKart(k)->isGhostKart()) continue;
+        float cur_time = world->getKart(k)->getFinishTime();
+        if (cur_time < min_time)
+            min_time = cur_time;
+    }
+
+    int day, month, year;
+    StkTime::getDate(&day, &month, &year);
+    std::string time = StringUtils::toString(min_time);
+    std::replace(time.begin(), time.end(), '.', '_');
+    std::ostringstream oss;
+    oss << Track::getCurrentTrack()->getIdent() << "_" << year << month << day
+        << "_" << num_karts << "_" << time << ".replay";
+    m_filename = oss.str();
+
+    if (!writeReplayFile(/*full_path*/false, &min_time))
+        return;
+
+    core::stringw msg = _("Replay saved in \"%s\".",
+        StringUtils::utf8ToWide(file_manager->getReplayDir() + getReplayFilename()));
+    MessageQueue::add(MessageQueue::MT_GENERIC, msg);
 
     if (WasmTimeTrialBridge::get()->isChallengeMode())
     {

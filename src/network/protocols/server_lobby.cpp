@@ -20,6 +20,7 @@
 
 #include "addons/addon.hpp"
 #include "config/user_config.hpp"
+#include "io/file_manager.hpp"
 #include "items/network_item_manager.hpp"
 #include "items/powerup_manager.hpp"
 #include "karts/abstract_kart.hpp"
@@ -52,6 +53,7 @@
 #include "online/request_manager.hpp"
 #include "online/xml_request.hpp"
 #include "race/race_manager.hpp"
+#include "replay/replay_recorder.hpp"
 #include "tracks/check_manager.hpp"
 #include "tracks/track.hpp"
 #include "tracks/track_manager.hpp"
@@ -62,7 +64,11 @@
 #include "utils/translation.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <fstream>
+#include <locale>
+#include <sstream>
 #include <iostream>
 #include <iterator>
 
@@ -1645,6 +1651,9 @@ void ServerLobby::update(int ticks)
         break;
     case LOAD_WORLD:
         Log::info("ServerLobbyRoom", "Starting the race loading.");
+        // Record every multiplayer race server-side so stk-gateway can upload
+        // the authoritative .replay alongside the match scoreboard.
+        RaceManager::get()->setRecordRace(true);
         // This will create the world instance, i.e. load track and karts
         loadWorld();
         m_state = WAIT_FOR_WORLD_LOADED;
@@ -2355,8 +2364,156 @@ void ServerLobby::checkRaceFinished()
         computeNewRankings();
         submitRankingsToAddons();
     }
+    emitGatewayMatchResult();
     m_state.store(WAIT_FOR_RACE_STOPPED);
 }   // checkRaceFinished
+
+//-----------------------------------------------------------------------------
+namespace
+{
+std::string escapeJsonString(const std::string& input)
+{
+    std::string out;
+    out.reserve(input.size() + 8);
+    for (unsigned char c : input)
+    {
+        switch (c)
+        {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b";  break;
+        case '\f': out += "\\f";  break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:
+            if (c < 0x20)
+            {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "\\u%04x", (unsigned int)c);
+                out += buf;
+            }
+            else
+            {
+                out.push_back((char)c);
+            }
+            break;
+        }
+    }
+    return out;
+}
+}   // namespace
+
+//-----------------------------------------------------------------------------
+/** Saves the server-recorded replay (if available) and emits a single-line JSON
+ *  scoreboard event on stdout for stk-gateway to enrich and persist.
+ */
+void ServerLobby::emitGatewayMatchResult()
+{
+    World* w = World::getWorld();
+    if (!w || !Track::getCurrentTrack())
+        return;
+
+    std::string replay_path;
+    unsigned int replay_version = 4;
+    if (RaceManager::get()->isRecordingRace() && ReplayRecorder::get())
+    {
+        replay_version = ReplayRecorder::get()->getReplayVersion();
+        const char* env_dir = std::getenv("STK_GATEWAY_REPLAY_DIR");
+        std::string dir = (env_dir && env_dir[0] != '\0')
+            ? std::string(env_dir)
+            : file_manager->getReplayDir();
+        if (!dir.empty() && dir.back() != '/' && dir.back() != '\\')
+            dir.push_back('/');
+
+        std::ostringstream path_oss;
+        path_oss.imbue(std::locale::classic());
+        path_oss << dir << "match_" << (int)ServerConfig::m_server_port
+                 << "_" << StkTime::getMonoTimeMs() << ".replay";
+        std::string candidate = path_oss.str();
+        if (ReplayRecorder::get()->saveToFile(candidate))
+        {
+            replay_path = candidate;
+            Log::info("ServerLobby", "Saved server replay to %s", replay_path.c_str());
+        }
+        else
+        {
+            Log::warn("ServerLobby", "Failed to save server replay to %s", candidate.c_str());
+        }
+    }
+
+    int num_laps = RaceManager::get()->getNumLaps();
+    if (num_laps == 9999) num_laps = 0;
+
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << "{\"track\":\"" << escapeJsonString(Track::getCurrentTrack()->getIdent()) << "\""
+        << ",\"mode\":\"" << escapeJsonString(RaceManager::get()->getMinorModeName()) << "\""
+        << ",\"difficulty\":" << (int)RaceManager::get()->getDifficulty()
+        << ",\"laps\":" << num_laps
+        << ",\"reverse\":" << (RaceManager::get()->getReverseTrack() ? "true" : "false")
+        << ",\"replay_version\":" << replay_version
+        << ",\"replay_path\":";
+    if (replay_path.empty())
+        oss << "null";
+    else
+        oss << "\"" << escapeJsonString(replay_path) << "\"";
+
+    oss << ",\"results\":[";
+    bool first = true;
+    const unsigned int num_karts = w->getNumKarts();
+    for (unsigned int k = 0; k < num_karts; k++)
+    {
+        const AbstractKart* kart = w->getKart(k);
+        if (!kart || kart->isGhostKart()) continue;
+
+        if (!first) oss << ",";
+        first = false;
+
+        std::string display_name = StringUtils::wideToUtf8(kart->getController()->getName());
+        float kart_color = 0.0f;
+        bool is_ai = true;
+        int peer_port = -1;
+
+        if (auto npp = RaceManager::get()->getKartInfo(k).getNetworkPlayerProfile().lock())
+        {
+            kart_color = npp->getDefaultKartColor();
+            if (auto peer = npp->getPeer())
+            {
+                is_ai = peer->isAIPeer();
+                if (!is_ai)
+                    peer_port = (int)peer->getAddress().getPort();
+            }
+        }
+
+        const bool dnf = !kart->hasFinishedRace() || kart->isEliminated();
+        const float finish_sec = kart->getFinishTime();
+        const bool has_time = !dnf && finish_sec > 0.0f;
+
+        oss << "{\"kart_index\":" << k
+            << ",\"display_name\":\"" << escapeJsonString(display_name) << "\""
+            << ",\"kart\":\"" << escapeJsonString(kart->getIdent()) << "\""
+            << ",\"kart_color\":" << kart_color
+            << ",\"rank\":" << kart->getPosition()
+            << ",\"finish_time_ms\":";
+        if (has_time)
+            oss << (int64_t)std::llround((double)finish_sec * 1000.0);
+        else
+            oss << "null";
+        oss << ",\"dnf\":" << (dnf ? "true" : "false")
+            << ",\"is_ai\":" << (is_ai ? "true" : "false")
+            << ",\"peer_port\":";
+        if (peer_port > 0)
+            oss << peer_port;
+        else
+            oss << "null";
+        oss << "}";
+    }
+    oss << "]}";
+
+    printf("STK_GATEWAY_MATCH_RESULT=%s\n", oss.str().c_str());
+    fflush(stdout);
+}   // emitGatewayMatchResult
 
 //-----------------------------------------------------------------------------
 /** Compute the new player's rankings used in ranked servers

@@ -85,6 +85,9 @@ private:
     /** Compute the replay's UID ; partly based on race data ; partly randomly */
     uint64_t computeUID(float min_time);
 
+    /** Shared implementation that writes the current replay buffers to disk. */
+    bool  writeReplayFile(bool full_path, float* out_min_time = NULL);
+
 
           ReplayRecorder();
          ~ReplayRecorder();
@@ -92,8 +95,12 @@ public:
     void  init();
     void  reset();
     void  save();
+    /** Saves the current replay buffers directly to \p full_path (used by
+     *  headless multiplayer servers). Returns true if the file was written. */
+    bool  saveToFile(const std::string& full_path);
     void  update(int ticks);
 
+    unsigned int getReplayVersion() const { return getCurrentReplayVersion(); }
     const uint64_t getLastUID() { return m_last_uid; }
 
     /** Functions to encode and decode attahcments and item types,

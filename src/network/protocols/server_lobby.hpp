@@ -276,6 +276,7 @@ private:
     void submitRankingsToAddons();
     void computeNewRankings();
     void checkRaceFinished();
+    void emitGatewayMatchResult();
     void getHitCaptureLimit();
     void configPeersStartTime();
     void resetServer();
