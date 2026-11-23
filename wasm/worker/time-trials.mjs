@@ -181,12 +181,11 @@ export async function query_scope_leaderboard(
 }
 
 /**
- * Computes a short deterministic content hash for a challenge's Top-3 podium state.
- * Returns null if no entries exist yet.
+ * Computes a short deterministic content hash for a challenge's Top-3 podium state
+ * (including the empty podium when no entries exist yet).
  */
 export async function compute_podium_hash(challenge, entries) {
   let top3 = Array.isArray(entries) ? entries.slice(0, 3) : [];
-  if (top3.length === 0) return null;
 
   let canonical = JSON.stringify({
     v: 1,
@@ -216,14 +215,14 @@ export async function compute_podium_hash(challenge, entries) {
 }
 
 /**
- * Ensures the Top-3 podium PNG exists in R2 (rendering via the Workers VPC
- * `PODIUM_RENDERER` service on cache miss) and returns its public Worker URL.
+ * Ensures the Top-3 podium PNG (or empty podium when no scores exist yet) exists
+ * in R2 (rendering via the Workers VPC `PODIUM_RENDERER` service on cache miss)
+ * and returns its public Worker URL.
  * Always fail-open: returns null if rendering is unconfigured or fails.
  */
 export async function ensure_podium_image({env, challenge, leaderboard, public_origin}) {
   if (!env || !env.REPLAYS || !public_origin) return null;
   let entries = (leaderboard && leaderboard.entries) || [];
-  if (entries.length === 0) return null;
 
   let hash = await compute_podium_hash(challenge, entries);
   if (!hash) return null;
@@ -355,9 +354,9 @@ export function build_challenge_components(challenge_id) {
   ];
 }
 
-async function edit_message_via_webhook({app_id, interaction_token, message_id, payload, fetch_impl}) {
-  let target = message_id || "@original";
-  let url = `${DISCORD_API_BASE}/webhooks/${encodeURIComponent(app_id)}/${encodeURIComponent(interaction_token)}/messages/${encodeURIComponent(target)}`;
+export async function edit_message_via_webhook({app_id, interaction_token, message_id, payload, fetch_impl = fetch}) {
+  let target = message_id ? encodeURIComponent(message_id) : "@original";
+  let url = `${DISCORD_API_BASE}/webhooks/${encodeURIComponent(app_id)}/${encodeURIComponent(interaction_token)}/messages/${target}`;
   let resp = await fetch_impl(url, {
     method: "PATCH",
     headers: {"Content-Type": "application/json"},

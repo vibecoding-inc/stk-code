@@ -19,7 +19,8 @@ import {
   upsert_user,
   ensure_scope_member,
   query_scope_leaderboard,
-  compute_podium_hash,
+  ensure_podium_image,
+  edit_message_via_webhook,
   build_challenge_embed,
   build_challenge_components,
 } from "./time-trials.mjs";
@@ -86,7 +87,7 @@ function get_option(options, name) {
   return opt ? opt.value : undefined;
 }
 
-export async function handleInteractions({request, env}) {
+export async function handleInteractions({request, env, ctx, fetch_impl = fetch, podium_wait_ms = 1500}) {
   if (request.method !== "POST") {
     return new Response("Method Not Allowed", {status: 405});
   }
@@ -246,16 +247,55 @@ export async function handleInteractions({request, env}) {
       limit: 10,
     });
 
+    let public_origin = new URL(request.url).origin;
     let podium_image_url = null;
-    if (env.REPLAYS && leaderboard.entries && leaderboard.entries.length > 0) {
-      try {
-        let hash = await compute_podium_hash(challenge, leaderboard.entries);
-        if (hash && (await env.REPLAYS.head(`podiums/${hash}.png`))) {
-          podium_image_url = `${new URL(request.url).origin}/api/timetrials/podium/${hash}.png`;
-        }
+    if (env.REPLAYS) {
+      let render_promise = ensure_podium_image({
+        env,
+        challenge,
+        leaderboard,
+        public_origin,
+      }).catch(() => null);
+
+      const TIMED_OUT = Symbol("podium_timeout");
+      let timer_id;
+      let raced = await Promise.race([
+        render_promise,
+        new Promise((resolve) => {
+          timer_id = setTimeout(() => resolve(TIMED_OUT), podium_wait_ms);
+        }),
+      ]);
+      clearTimeout(timer_id);
+
+      if (raced !== TIMED_OUT) {
+        podium_image_url = raced;
       }
-      catch {
-        // Fail-open on cache check
+      else if (env.DISCORD_CLIENT_ID && interaction.token) {
+        // Render is still in flight; respond within Discord's 3s window and
+        // PATCH @original with the podium image as soon as it finishes.
+        let followup_update = (async () => {
+          let late_url = await render_promise;
+          if (!late_url) return;
+          try {
+            await edit_message_via_webhook({
+              app_id: env.DISCORD_CLIENT_ID,
+              interaction_token: interaction.token,
+              message_id: null,
+              payload: {
+                embeds: [build_challenge_embed(challenge, leaderboard, {podium_image_url: late_url})],
+                components: build_challenge_components(challenge_id),
+              },
+              fetch_impl,
+            });
+          }
+          catch {
+            // Fail-open on background embed update
+          }
+        })();
+
+        if (ctx && typeof ctx.waitUntil === "function") {
+          ctx.waitUntil(followup_update);
+        }
       }
     }
 

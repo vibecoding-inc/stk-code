@@ -248,6 +248,9 @@ function create_mock_r2() {
   let blobs = new Map();
   return {
     _blobs: blobs,
+    async head(key) {
+      return blobs.has(key) ? {key} : null;
+    },
     async put(key, data) {
       blobs.set(key, new Uint8Array(data));
     },
@@ -537,7 +540,14 @@ test("compute_podium_hash is deterministic and ignores entries beyond Top 3", as
   assert.match(h1, /^[a-f0-9]{24}$/);
   assert.equal(h1, h2);
   assert.notEqual(h1, h3);
-  assert.equal(await compute_podium_hash(challenge, []), null);
+
+  let h_empty_1 = await compute_podium_hash(challenge, []);
+  let h_empty_2 = await compute_podium_hash(challenge, []);
+  let h_empty_other = await compute_podium_hash({...challenge, track: "abyss"}, []);
+  assert.match(h_empty_1, /^[a-f0-9]{24}$/);
+  assert.equal(h_empty_1, h_empty_2);
+  assert.notEqual(h_empty_1, h1);
+  assert.notEqual(h_empty_1, h_empty_other);
 });
 
 test("ensure_podium_image renders via Workers VPC on cache miss, caches in R2, and serves via GET route", async () => {
@@ -657,4 +667,191 @@ test("ensure_podium_image fails open when Workers VPC binding is absent or error
     public_origin: "https://stk.example.workers.dev",
   });
   assert.equal(err_vpc, null);
+});
+
+test("/timetrial renders an empty podium image when no guild scores exist and includes guild scores when present", async () => {
+  let keys = await generate_ed25519_keypair();
+  let db = create_mock_db();
+  let r2 = create_mock_r2();
+  let fake_png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  let render_requests = [];
+
+  let env = {
+    DISCORD_PUBLIC_KEY: keys.publicKeyHex,
+    DISCORD_CLIENT_ID: "app_123",
+    TIME_TRIALS_DB: db,
+    REPLAYS: r2,
+    PODIUM_RENDER_SECRET: "render-secret",
+    PODIUM_RENDERER: {
+      async fetch(url, init) {
+        render_requests.push(JSON.parse(init.body));
+        return new Response(fake_png, {status: 200, headers: {"Content-Type": "image/png"}});
+      },
+    },
+  };
+
+  // 1. Fresh guild with no scores yet -> renders empty podium image from the start
+  let empty_req = await make_signed_interaction_request(
+    {
+      type: 2,
+      guild_id: "guild_empty",
+      channel_id: "chan_1",
+      token: "cmd_tok_empty",
+      member: {
+        user: {id: "user_1", username: "alice", global_name: "Alice"},
+      },
+      data: {
+        name: "timetrial",
+        options: [{name: "track", value: "abyss"}],
+      },
+    },
+    keys
+  );
+  let empty_resp = await handleInteractions({request: empty_req, env});
+  assert.equal(empty_resp.status, 200);
+  let empty_body = await empty_resp.json();
+  assert.equal(empty_body.type, 4);
+  assert.ok(empty_body.data.embeds[0].image);
+  assert.match(
+    empty_body.data.embeds[0].image.url,
+    /^https:\/\/example\.workers\.dev\/api\/timetrials\/podium\/[a-f0-9]{24}\.png$/
+  );
+  assert.equal(render_requests.length, 1);
+  assert.deepEqual(render_requests[0].entries, []);
+  assert.equal(render_requests[0].track, "abyss");
+
+  // 2. Seed an existing guild member PB (not yet rendered in R2) -> renders podium with guild score
+  db._state.users.set("user_2", {
+    user_id: "user_2",
+    username: "bob",
+    display_name: "Bob",
+    avatar: "bob_av",
+    updated_at: Date.now(),
+  });
+  db._state.scope_members.set("guild|guild_scored|user_2", {
+    guild_nick: "TurboBob",
+    guild_avatar: "bob_guild_av",
+  });
+  db._state.user_pbs.set("user_2|abyss|2|2|0", {
+    user_id: "user_2",
+    track: "abyss",
+    difficulty: 2,
+    laps: 2,
+    reverse: 0,
+    run_id: "run_bob_1",
+    kart: "nolok",
+    kart_color: 0,
+    time_ms: 79123,
+    r2_key: "replays/abyss/run_bob_1.replay.gz",
+    replay_version: 4,
+    updated_at: Date.now(),
+  });
+
+  let scored_req = await make_signed_interaction_request(
+    {
+      type: 2,
+      guild_id: "guild_scored",
+      channel_id: "chan_2",
+      token: "cmd_tok_scored",
+      member: {
+        user: {id: "user_1", username: "alice", global_name: "Alice"},
+      },
+      data: {
+        name: "timetrial",
+        options: [{name: "track", value: "abyss"}],
+      },
+    },
+    keys
+  );
+  let scored_resp = await handleInteractions({request: scored_req, env});
+  assert.equal(scored_resp.status, 200);
+  let scored_body = await scored_resp.json();
+  assert.ok(scored_body.data.embeds[0].image);
+  assert.notEqual(scored_body.data.embeds[0].image.url, empty_body.data.embeds[0].image.url);
+  assert.equal(render_requests.length, 2);
+  assert.equal(render_requests[1].entries.length, 1);
+  assert.equal(render_requests[1].entries[0].display_name, "TurboBob");
+  assert.equal(render_requests[1].entries[0].kart, "nolok");
+  assert.equal(render_requests[1].entries[0].time_ms, 79123);
+});
+
+test("/timetrial responds quickly and PATCHes @original if podium render exceeds wait budget", async () => {
+  let keys = await generate_ed25519_keypair();
+  let db = create_mock_db();
+  let r2 = create_mock_r2();
+  let fake_png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  let resolve_render;
+  let render_gate = new Promise((resolve) => {
+    resolve_render = resolve;
+  });
+
+  let patch_calls = [];
+  let mock_fetch = async (url, init) => {
+    patch_calls.push({url: String(url), method: init.method, body: JSON.parse(init.body)});
+    return new Response(JSON.stringify({id: "msg_1"}), {status: 200});
+  };
+
+  let wait_promises = [];
+  let ctx = {
+    waitUntil(p) {
+      wait_promises.push(p);
+    },
+  };
+
+  let env = {
+    DISCORD_PUBLIC_KEY: keys.publicKeyHex,
+    DISCORD_CLIENT_ID: "app_123",
+    TIME_TRIALS_DB: db,
+    REPLAYS: r2,
+    PODIUM_RENDERER: {
+      async fetch() {
+        await render_gate;
+        return new Response(fake_png, {status: 200, headers: {"Content-Type": "image/png"}});
+      },
+    },
+  };
+
+  let req = await make_signed_interaction_request(
+    {
+      type: 2,
+      guild_id: "guild_slow",
+      channel_id: "chan_3",
+      token: "cmd_tok_slow",
+      member: {
+        user: {id: "user_1", username: "alice", global_name: "Alice"},
+      },
+      data: {
+        name: "timetrial",
+        options: [{name: "track", value: "abyss"}],
+      },
+    },
+    keys
+  );
+
+  let resp = await handleInteractions({
+    request: req,
+    env,
+    ctx,
+    fetch_impl: mock_fetch,
+    podium_wait_ms: 10,
+  });
+  assert.equal(resp.status, 200);
+  let body = await resp.json();
+  assert.equal(body.type, 4);
+  assert.equal(body.data.embeds[0].image, undefined);
+  assert.equal(wait_promises.length, 1);
+
+  resolve_render();
+  await Promise.all(wait_promises);
+
+  assert.equal(patch_calls.length, 1);
+  assert.equal(
+    patch_calls[0].url,
+    "https://discord.com/api/v10/webhooks/app_123/cmd_tok_slow/messages/@original"
+  );
+  assert.equal(patch_calls[0].method, "PATCH");
+  assert.match(
+    patch_calls[0].body.embeds[0].image.url,
+    /^https:\/\/example\.workers\.dev\/api\/timetrials\/podium\/[a-f0-9]{24}\.png$/
+  );
 });
