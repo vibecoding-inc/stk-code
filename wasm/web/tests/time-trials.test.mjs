@@ -357,7 +357,7 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
   let cmd_body = await cmd_resp.json();
   assert.equal(cmd_body.type, 4);
   assert.match(cmd_body.data.embeds[0].title, /Abyss/);
-  assert.deepEqual(cmd_body.data.embeds[0].fields[0], {name: "Laps", value: "2", inline: true});
+  assert.deepEqual(cmd_body.data.embeds[0].fields[0], {name: "Laps", value: "1", inline: true});
   let play_custom_id = cmd_body.data.components[0].components[0].custom_id;
   assert.ok(play_custom_id.startsWith("tt:play:"));
   let challenge_id = play_custom_id.slice("tt:play:".length);
@@ -395,7 +395,7 @@ test("Full Time Trial flow: /timetrial -> Play button -> /api/token -> submit ->
   assert.ok(tok_body.session_token);
   assert.equal(tok_body.pending_time_trial.challenge_id, challenge_id);
   assert.equal(tok_body.pending_time_trial.track, "abyss");
-  assert.equal(tok_body.pending_time_trial.laps, 2);
+  assert.equal(tok_body.pending_time_trial.laps, 1);
 
   // 4. Submit a completed Time Trial run
   let form = new FormData();

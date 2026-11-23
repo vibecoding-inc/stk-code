@@ -24,7 +24,7 @@ export const COMMANDS = [
       },
       {
         name: "laps",
-        description: "Number of laps (default: 2)",
+        description: "Number of laps (default: 1)",
         type: 4, // INTEGER
         required: false,
         min_value: 1,
