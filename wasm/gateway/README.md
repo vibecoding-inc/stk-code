@@ -37,6 +37,6 @@ Then expose `http://127.0.0.1:8080` through `cloudflared` and add a Discord Acti
 | `PORT_RANGE_START` / `PORT_RANGE_END` | `30000` / `30016` | Local UDP port pool (also caps max concurrent rooms) |
 | `MAX_PLAYERS_PER_ROOM` | `16` | Max concurrent clients per room |
 | `ROOM_IDLE_TIMEOUT_SECS` | `120` | Seconds before an empty room process is terminated |
-| `MATCH_UPLOAD_URL` | *(unset)* | Optional Cloudflare Worker origin (e.g. `https://supertuxkart-wasm.<subdomain>.workers.dev`) to persist multiplayer scoreboards & replays |
-| `GATEWAY_API_SECRET` | *(unset)* | Shared bearer token matching the Worker's `GATEWAY_API_SECRET` secret |
+| `MATCH_UPLOAD_URL` | *(unset)* | Optional Cloudflare Worker origin (deployed at `https://supertuxkart-wasm.profiluefter.workers.dev`) to persist multiplayer scoreboards & replays |
+| `GATEWAY_API_SECRET` | *(unset)* | Shared bearer token (`openssl rand -hex 32`) matching the Worker's `GATEWAY_API_SECRET` secret |
 | `DEV_INSECURE_AUTH` | `false` | Set `1` for local non-Discord testing only |

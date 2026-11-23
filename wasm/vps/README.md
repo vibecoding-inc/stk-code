@@ -8,7 +8,7 @@ This directory holds the Docker Compose stack deployed on the VPS that runs:
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and fill in `CLOUDFLARE_TUNNEL_TOKEN` and `PODIUM_RENDER_SECRET`.
+1. Copy `.env.example` to `.env` and fill in `CLOUDFLARE_TUNNEL_TOKEN`, `PODIUM_RENDER_SECRET`, and (for multiplayer scoreboards & replays) `GATEWAY_API_SECRET` (`MATCH_UPLOAD_URL` defaults to `https://supertuxkart-wasm.profiluefter.workers.dev`).
 2. Start / update the stack:
    ```bash
    docker compose pull
