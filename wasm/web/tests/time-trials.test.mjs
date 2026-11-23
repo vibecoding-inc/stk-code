@@ -9,7 +9,7 @@ import {
   build_challenge_embed,
 } from "../../worker/time-trials.mjs";
 import { sign_jwt } from "../../worker/jwt.mjs";
-import { autocomplete_tracks } from "../../worker/tracks.mjs";
+import { autocomplete_tracks, DEFAULT_LAPS } from "../../worker/tracks.mjs";
 import { register_commands } from "../../scripts/register-commands.mjs";
 
 const TEST_JWT_SECRET = "time-trials-test-jwt-secret-0123456789";
@@ -732,11 +732,11 @@ test("/timetrial renders an empty podium image when no guild scores exist and in
     guild_nick: "TurboBob",
     guild_avatar: "bob_guild_av",
   });
-  db._state.user_pbs.set("user_2|abyss|2|2|0", {
+  db._state.user_pbs.set(`user_2|abyss|2|${DEFAULT_LAPS}|0`, {
     user_id: "user_2",
     track: "abyss",
     difficulty: 2,
-    laps: 2,
+    laps: DEFAULT_LAPS,
     reverse: 0,
     run_id: "run_bob_1",
     kart: "nolok",
