@@ -118,7 +118,9 @@ if(EMSCRIPTEN)
 
     # STK renders through Irrlicht -> SDL2 on the browser main thread via
     # Emscripten's EGL/WebGL2 backend.
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions")
+    # Keep --profiling-funcs so browser & telemetry stack traces include C++
+    # function names (lightweight WASM `name` section, no DWARF bloat).
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L${CMAKE_SOURCE_DIR}/wasm/prefix/lib/ -sENVIRONMENT=web -lidbfs.js -lwebsocket.js -sASSERTIONS=1 -sSTACK_SIZE=30000000 -sMIN_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3 -sGL_FFP_ONLY -sUSE_SDL_MIXER=2 -lopenal -sINITIAL_MEMORY=768MB -sWASM_BIGINT -lcrypto -fwasm-exceptions --profiling-funcs")
 
     if(CMAKE_BUILD_TYPE MATCHES Debug)
         set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --profiling")
