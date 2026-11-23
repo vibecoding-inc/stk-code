@@ -10,6 +10,8 @@ use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{info, info_span, warn, Instrument};
 
+use crate::matches::{parse_match_result_line, MatchUploader, PeerRegistry};
+
 pub fn parse_set_ai_command(line: &str) -> Option<u8> {
     let idx = line.find("STK_GATEWAY_SET_AI=")?;
     let rest = &line[idx + "STK_GATEWAY_SET_AI=".len()..];
@@ -30,6 +32,7 @@ pub trait RoomProcess: Send + Sync {
 pub struct StkChildProcess {
     child: Child,
     config_path: PathBuf,
+    replay_dir: PathBuf,
     ai_cmd_tx: Option<mpsc::UnboundedSender<u8>>,
 }
 
@@ -39,25 +42,38 @@ impl RoomProcess for StkChildProcess {
         self.ai_cmd_tx.take();
         let _ = self.child.start_kill();
         let _ = std::fs::remove_file(&self.config_path);
+        let _ = std::fs::remove_dir_all(&self.replay_dir);
     }
 }
 
 pub trait ServerSpawner: Send + Sync {
-    fn spawn(&self, instance_id: &str, port: u16) -> Result<SpawnedRoom, String>;
+    fn spawn(
+        &self,
+        instance_id: &str,
+        port: u16,
+        peers: PeerRegistry,
+    ) -> Result<SpawnedRoom, String>;
 }
 
 pub struct StkServerSpawner {
     stk_binary: String,
     stk_data_dir: Option<String>,
     max_players: u8,
+    match_uploader: Option<Arc<MatchUploader>>,
 }
 
 impl StkServerSpawner {
-    pub fn new(stk_binary: String, stk_data_dir: Option<String>, max_players: u8) -> Self {
+    pub fn new(
+        stk_binary: String,
+        stk_data_dir: Option<String>,
+        max_players: u8,
+        match_uploader: Option<Arc<MatchUploader>>,
+    ) -> Self {
         Self {
             stk_binary,
             stk_data_dir,
             max_players,
+            match_uploader,
         }
     }
 
@@ -86,14 +102,22 @@ impl StkServerSpawner {
 }
 
 impl ServerSpawner for StkServerSpawner {
-    fn spawn(&self, instance_id: &str, port: u16) -> Result<SpawnedRoom, String> {
+    fn spawn(
+        &self,
+        instance_id: &str,
+        port: u16,
+        peers: PeerRegistry,
+    ) -> Result<SpawnedRoom, String> {
         let config_path = std::env::temp_dir().join(format!("stk-room-{port}.xml"));
+        let replay_dir = std::env::temp_dir().join(format!("stk-replays-{port}"));
+        let _ = std::fs::create_dir_all(&replay_dir);
         let xml = Self::build_server_config_xml(port, self.max_players);
         std::fs::write(&config_path, xml)
             .map_err(|e| format!("failed to write server config for port {port}: {e}"))?;
 
         let mut cmd = Command::new(&self.stk_binary);
         cmd.arg(format!("--server-config={}", config_path.display()))
+            .env("STK_GATEWAY_REPLAY_DIR", &replay_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -170,6 +194,9 @@ impl ServerSpawner for StkServerSpawner {
             let stdout_span = span.clone();
             let ready_tx_out = ready_tx.clone();
             let ai_tx_out = ai_cmd_tx.clone();
+            let uploader = self.match_uploader.clone();
+            let instance_id_out = instance_id.to_string();
+            let peers_out = Arc::clone(&peers);
             tokio::spawn(
                 async move {
                     let mut lines = BufReader::new(stdout).lines();
@@ -180,6 +207,27 @@ impl ServerSpawner for StkServerSpawner {
                             }
                             if let Some(ai_count) = parse_set_ai_command(&line) {
                                 let _ = ai_tx_out.send(ai_count);
+                            }
+                            if let Some(raw_match) = parse_match_result_line(&line) {
+                                if let Some(ref uploader) = uploader {
+                                    let uploader = Arc::clone(uploader);
+                                    let inst = instance_id_out.clone();
+                                    let peers_snapshot = peers_out.lock().await.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(err) =
+                                            uploader.upload_match(&inst, raw_match, &peers_snapshot).await
+                                        {
+                                            warn!(instance_id = %inst, error = %err, "failed to upload multiplayer match result");
+                                        }
+                                    });
+                                } else {
+                                    // Clean up temp replay file if uploader is not configured.
+                                    if let Some(ref path) = raw_match.replay_path {
+                                        let _ = tokio::fs::remove_file(path).await;
+                                    }
+                                    info!("received STK_GATEWAY_MATCH_RESULT (upload disabled; set MATCH_UPLOAD_URL & GATEWAY_API_SECRET)");
+                                }
+                                continue;
                             }
                             info!(stream = "stdout", "{line}");
                         }
@@ -215,6 +263,7 @@ impl ServerSpawner for StkServerSpawner {
             process: Box::new(StkChildProcess {
                 child,
                 config_path,
+                replay_dir,
                 ai_cmd_tx: Some(ai_cmd_tx),
             }),
             ready_rx,
@@ -228,6 +277,8 @@ struct RoomEntry {
     ready_rx: watch::Receiver<bool>,
     /// Active clients keyed by Discord `user_id` -> (connection_id, kick sender).
     clients: HashMap<String, (u64, oneshot::Sender<()>)>,
+    /// Ephemeral local UDP source port -> verified Discord identity (retained for room lifetime).
+    peers: PeerRegistry,
     idle_reaper: Option<JoinHandle<()>>,
 }
 
@@ -262,6 +313,7 @@ pub struct RoomLease {
     pub newly_spawned: bool,
     pub ready_rx: watch::Receiver<bool>,
     pub kick_rx: oneshot::Receiver<()>,
+    pub peers: PeerRegistry,
 }
 
 #[derive(Debug, Clone)]
@@ -317,7 +369,8 @@ impl RoomManager {
                 .free_ports
                 .pop_front()
                 .ok_or(RoomError::CapacityReached)?;
-            let spawned = match self.spawner.spawn(instance_id, port) {
+            let peers: PeerRegistry = Arc::new(Mutex::new(HashMap::new()));
+            let spawned = match self.spawner.spawn(instance_id, port, Arc::clone(&peers)) {
                 Ok(p) => p,
                 Err(err) => {
                     guard.free_ports.push_back(port);
@@ -331,6 +384,7 @@ impl RoomManager {
                     process: spawned.process,
                     ready_rx: spawned.ready_rx,
                     clients: HashMap::new(),
+                    peers,
                     idle_reaper: None,
                 },
             );
@@ -363,6 +417,7 @@ impl RoomManager {
             newly_spawned,
             ready_rx: room.ready_rx.clone(),
             kick_rx,
+            peers: Arc::clone(&room.peers),
         })
     }
 
@@ -453,7 +508,12 @@ mod tests {
     }
 
     impl ServerSpawner for FakeSpawner {
-        fn spawn(&self, _instance_id: &str, _port: u16) -> Result<SpawnedRoom, String> {
+        fn spawn(
+            &self,
+            _instance_id: &str,
+            _port: u16,
+            _peers: PeerRegistry,
+        ) -> Result<SpawnedRoom, String> {
             self.spawned.fetch_add(1, Ordering::SeqCst);
             let (_tx, ready_rx) = watch::channel(true);
             Ok(SpawnedRoom {

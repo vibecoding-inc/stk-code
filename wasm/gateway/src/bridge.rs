@@ -8,6 +8,7 @@ use tokio::net::UdpSocket;
 use tracing::{debug, info, info_span, warn, Instrument};
 
 use crate::auth::AuthVerifier;
+use crate::matches::ClientIdentity;
 use crate::rooms::RoomManager;
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +184,18 @@ pub async fn handle_ws(mut ws: WebSocket, ctx: Arc<BridgeContext>) {
             .await;
         send_handshake_error(&mut ws, "udp_connect_failed").await;
         return;
+    }
+
+    // Record ephemeral local UDP port -> verified Discord identity so server-emitted
+    // match results can attribute each scoreboard row to the exact Discord user.
+    if let Ok(local_addr) = udp.local_addr() {
+        lease.peers.lock().await.insert(
+            local_addr.port(),
+            ClientIdentity {
+                user_id: session.user_id.clone(),
+                username: session.username.clone(),
+            },
+        );
     }
 
     // Step 5: Acknowledge handshake; subsequent binary frames are raw ENet datagrams.

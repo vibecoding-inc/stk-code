@@ -1,6 +1,7 @@
 mod auth;
 mod bridge;
 mod config;
+mod matches;
 mod rooms;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use tracing::{info, warn};
 use crate::auth::{AuthVerifier, DevInsecureVerifier, DiscordApiVerifier};
 use crate::bridge::{handle_ws, BridgeContext};
 use crate::config::Config;
+use crate::matches::MatchUploader;
 use crate::rooms::{RoomManager, StkServerSpawner};
 
 #[derive(Clone)]
@@ -98,10 +100,22 @@ async fn main() {
         ))
     };
 
+    let match_uploader = match (&cfg.match_upload_url, &cfg.gateway_api_secret) {
+        (Some(url), Some(secret)) => {
+            info!(url = %url, "multiplayer match scoreboard & replay upload enabled");
+            Some(Arc::new(MatchUploader::new(url.clone(), secret.clone())))
+        }
+        _ => {
+            info!("MATCH_UPLOAD_URL / GATEWAY_API_SECRET not set — multiplayer match uploads disabled");
+            None
+        }
+    };
+
     let spawner = Arc::new(StkServerSpawner::new(
         cfg.stk_binary.clone(),
         cfg.stk_data_dir.clone(),
         cfg.max_players_per_room,
+        match_uploader,
     ));
 
     let rooms = Arc::new(RoomManager::new(

@@ -21,6 +21,8 @@ pub struct Config {
     pub auth_handshake_timeout: Duration,
     pub auth_cache_ttl: Duration,
     pub max_datagram_bytes: usize,
+    pub match_upload_url: Option<String>,
+    pub gateway_api_secret: Option<String>,
 }
 
 impl Config {
@@ -118,6 +120,15 @@ impl Config {
             .parse()
             .map_err(|e| format!("Invalid MAX_DATAGRAM_BYTES: {e}"))?;
 
+        let match_upload_url = env::var("MATCH_UPLOAD_URL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let gateway_api_secret = env::var("GATEWAY_API_SECRET")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         Ok(Self {
             listen_addr,
             discord_application_id,
@@ -135,6 +146,8 @@ impl Config {
             auth_handshake_timeout: Duration::from_secs(auth_timeout_secs),
             auth_cache_ttl: Duration::from_secs(auth_cache_secs),
             max_datagram_bytes,
+            match_upload_url,
+            gateway_api_secret,
         })
     }
 }
