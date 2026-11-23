@@ -274,8 +274,18 @@ private:
                            T* best_choice, float* rate);
     void getRankingForPlayer(std::shared_ptr<NetworkPlayerProfile> p);
     void submitRankingsToAddons();
+    struct GatewayKartMeta
+    {
+        float kart_color = 0.0f;
+        bool is_ai = true;
+        int peer_port = -1;
+        bool valid = false;
+    };
+    std::vector<GatewayKartMeta> m_gateway_kart_meta;
+
     void computeNewRankings();
     void checkRaceFinished();
+    void snapshotGatewayKartMeta();
     void emitGatewayMatchResult();
     void getHitCaptureLimit();
     void configPeersStartTime();

@@ -1656,6 +1656,7 @@ void ServerLobby::update(int ticks)
         RaceManager::get()->setRecordRace(true);
         // This will create the world instance, i.e. load track and karts
         loadWorld();
+        snapshotGatewayKartMeta();
         m_state = WAIT_FOR_WORLD_LOADED;
         break;
     case RACING:
@@ -2405,6 +2406,48 @@ std::string escapeJsonString(const std::string& input)
 }   // namespace
 
 //-----------------------------------------------------------------------------
+/** Captures per-kart peer port, AI flag, and kart color at race start so
+ *  players who disconnect mid-race still preserve their Discord attribution
+ *  when emitGatewayMatchResult() runs at race end.
+ */
+void ServerLobby::snapshotGatewayKartMeta()
+{
+    m_gateway_kart_meta.clear();
+    World* w = World::getWorld();
+    if (!w)
+        return;
+
+    const unsigned int num_karts = w->getNumKarts();
+    m_gateway_kart_meta.resize(num_karts);
+    for (unsigned int k = 0; k < num_karts; k++)
+    {
+        const AbstractKart* kart = w->getKart(k);
+        if (!kart || kart->isGhostKart())
+            continue;
+
+        GatewayKartMeta meta;
+        int global_player_id = RaceManager::get()->getKartGlobalPlayerId(k);
+        if (global_player_id >= 0 &&
+            (unsigned int)global_player_id < RaceManager::get()->getNumPlayers())
+        {
+            if (auto npp = RaceManager::get()->getKartInfo((unsigned int)global_player_id)
+                    .getNetworkPlayerProfile().lock())
+            {
+                meta.kart_color = npp->getDefaultKartColor();
+                if (auto peer = npp->getPeer())
+                {
+                    meta.is_ai = peer->isAIPeer();
+                    if (!meta.is_ai)
+                        meta.peer_port = (int)peer->getAddress().getPort();
+                    meta.valid = true;
+                }
+            }
+        }
+        m_gateway_kart_meta[k] = meta;
+    }
+}   // snapshotGatewayKartMeta
+
+//-----------------------------------------------------------------------------
 /** Saves the server-recorded replay (if available) and emits a single-line JSON
  *  scoreboard event on stdout for stk-gateway to enrich and persist.
  */
@@ -2475,6 +2518,13 @@ void ServerLobby::emitGatewayMatchResult()
         bool is_ai = true;
         int peer_port = -1;
 
+        if (k < m_gateway_kart_meta.size() && m_gateway_kart_meta[k].valid)
+        {
+            kart_color = m_gateway_kart_meta[k].kart_color;
+            is_ai = m_gateway_kart_meta[k].is_ai;
+            peer_port = m_gateway_kart_meta[k].peer_port;
+        }
+
         int global_player_id = RaceManager::get()->getKartGlobalPlayerId(k);
         if (global_player_id >= 0 &&
             (unsigned int)global_player_id < RaceManager::get()->getNumPlayers())
@@ -2486,8 +2536,7 @@ void ServerLobby::emitGatewayMatchResult()
                 if (auto peer = npp->getPeer())
                 {
                     is_ai = peer->isAIPeer();
-                    if (!is_ai)
-                        peer_port = (int)peer->getAddress().getPort();
+                    peer_port = is_ai ? -1 : (int)peer->getAddress().getPort();
                 }
             }
         }
@@ -2519,6 +2568,7 @@ void ServerLobby::emitGatewayMatchResult()
 
     printf("STK_GATEWAY_MATCH_RESULT=%s\n", oss.str().c_str());
     fflush(stdout);
+    m_gateway_kart_meta.clear();
 }   // emitGatewayMatchResult
 
 //-----------------------------------------------------------------------------
