@@ -26,6 +26,7 @@
 #include "states_screens/state_manager.hpp"
 
 #include <assert.h>
+#include <cstdint>
 #include <vector>
 
 
@@ -151,6 +152,9 @@ private:
     /** True if any row has a circular Discord avatar to draw beside the kart icon. */
     bool                       m_has_any_avatar;
 
+    /** Last seen DiscordAvatarManager version to refresh layout if names/avatars arrive late. */
+    uint64_t                   m_last_avatar_version;
+
     /** Width of the kart name column. */
     unsigned int               m_width_kart_name;
 
@@ -211,6 +215,7 @@ private:
     void displayOneEntry(unsigned int x, unsigned int y,
                          unsigned int n, bool display_points);
     void determineTableLayout();
+    void recomputeColumnWidths();
     void determineGPLayout();
     void enableAllButtons();
     void enableGPProgress();

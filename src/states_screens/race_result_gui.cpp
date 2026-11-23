@@ -83,6 +83,46 @@
 #include <emscripten.h>
 #endif
 
+namespace
+{
+#ifndef SERVER_ONLY
+/** Resolves any `<@discord_id>` mentions and truncates `text` with "..." so
+ *  its rendered width in `font` never exceeds `max_width` pixels. */
+core::stringw fitTextToWidth(gui::ScalableFont* font,
+                             const core::stringw& text,
+                             int max_width)
+{
+    if (!font || max_width <= 0 || text.empty())
+        return L"";
+
+    core::stringw resolved = DiscordAvatarManager::get()->resolveMentions(text);
+    if ((int)font->getDimension(resolved.c_str()).Width <= max_width)
+        return resolved;
+
+    const core::stringw ellipsis(L"...");
+    const int ellipsis_w = (int)font->getDimension(ellipsis.c_str()).Width;
+    if (ellipsis_w >= max_width)
+        return L"";
+
+    int lo = 0;
+    int hi = (int)resolved.size();
+    while (lo < hi)
+    {
+        int mid = (lo + hi + 1) / 2;
+        core::stringw candidate = resolved.subString(0, mid, false) + ellipsis;
+        if ((int)font->getDimension(candidate.c_str()).Width <= max_width)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+
+    if (lo == 0)
+        return ellipsis;
+    return resolved.subString(0, lo, false) + ellipsis;
+}
+#endif
+}   // namespace
+
 /** Constructor, initialises internal data structures.
  */
 RaceResultGUI::RaceResultGUI() : Screen("race_result.stkgui",
@@ -94,7 +134,8 @@ RaceResultGUI::RaceResultGUI() : Screen("race_result.stkgui",
     m_saved_middle_visible(false),
     m_saved_right_visible(false),
     m_saved_share_visible(false),
-    m_has_any_avatar(false)
+    m_has_any_avatar(false),
+    m_last_avatar_version(0)
 {
 }   // RaceResultGUI
 
@@ -992,8 +1033,6 @@ void RaceResultGUI::onConfirm()
  */
 void RaceResultGUI::determineTableLayout()
 {
-    GUIEngine::Widget *table_area = getWidget("result-table");
-
     m_font = GUIEngine::getFont();
     assert(m_font);
     //m_was_monospace = m_font->getMonospaceDigits();
@@ -1109,12 +1148,6 @@ void RaceResultGUI::determineTableLayout()
     core::dimension2du r = m_font->getDimension(string_max_time.c_str());
     m_width_finish_time = r.Width;
 
-    // Top pixel where to display text
-    m_top = table_area->m_y;
-
-    // Height of the result display
-    unsigned int height = table_area->m_h;
-
     // Setup different timing information for the different phases
     // -----------------------------------------------------------
     // How much time between consecutive rows
@@ -1136,13 +1169,39 @@ void RaceResultGUI::determineTableLayout()
     // The time to increase the number of points.
     m_time_for_points = 2.0f;
 
+    recomputeColumnWidths();
+}   // determineTableLayout
+
+//-----------------------------------------------------------------------------
+/** Recomputes column widths and row spacing for `m_all_row_infos`.
+ *  Called during initial layout, on window resize, and whenever
+ *  DiscordAvatarManager registers new usernames or avatars so times never
+ *  overlap Discord usernames or the right-hand Highscores column.
+ */
+void RaceResultGUI::recomputeColumnWidths()
+{
+    GUIEngine::Widget *table_area = getWidget("result-table");
+    if (!table_area)
+        return;
+
+    m_font = GUIEngine::getFont();
+    assert(m_font);
+
+    const unsigned int num_karts = std::max(1u, (unsigned int)m_all_row_infos.size());
+    const bool active_gp =
+        (RaceManager::get()->getMajorMode() == RaceManager::MAJOR_MODE_GRAND_PRIX);
+
+    m_top = table_area->m_y;
+    m_leftmost_column = table_area->m_x;
+    unsigned int height = table_area->m_h;
+
     // Determine text height
-    r = m_font->getDimension(L"Y");
+    core::dimension2du r = m_font->getDimension(L"Y");
     m_distance_between_rows = (int)(1.5f*r.Height);
     m_distance_between_meta_rows = m_distance_between_rows;
-    
+
     // If there are too many highscores, reduce size between rows
-    Highscores* scores = World::getWorld()->getHighscores();
+    Highscores* scores = World::getWorld() ? World::getWorld()->getHighscores() : nullptr;
     if (scores != NULL &&
         scores->getNumberEntries() * m_distance_between_meta_rows > height * 0.5f)
         m_distance_between_meta_rows *= 0.8f;
@@ -1153,21 +1212,64 @@ void RaceResultGUI::determineTableLayout()
 
     m_width_icon = std::min((int)(table_area->m_h / num_karts),
                                    GUIEngine::getFontHeight());
-
     m_width_column_space = 10;
 
+    // Refresh avatar textures and measure resolved name & time widths
+    m_has_any_avatar = false;
+    m_width_kart_name = 0;
+    unsigned int max_row_time_width = 0;
+    for (unsigned int i = 0; i < m_all_row_infos.size(); i++)
+    {
+        RowInfo *ri = &(m_all_row_infos[i]);
+        if (!ri->m_avatar_icon)
+            ri->m_avatar_icon = DiscordAvatarManager::get()->getAvatarTextureForText(ri->m_kart_name);
+        if (ri->m_avatar_icon)
+            m_has_any_avatar = true;
+
+        core::dimension2du name_dim = m_font->getDimension(ri->m_kart_name.c_str());
+        if (name_dim.Width > m_width_kart_name)
+            m_width_kart_name = name_dim.Width;
+
+        core::dimension2du time_dim = m_font->getDimension(ri->m_finish_time_string.c_str());
+        if (time_dim.Width > max_row_time_width)
+            max_row_time_width = time_dim.Width;
+    }
+
+    if (max_row_time_width > 0)
+        m_width_finish_time = max_row_time_width;
+
     // Determine width of new points column
-
-    //m_font->setMonospaceDigits(true);
     core::dimension2du r_new_p = m_font->getDimension(L"+99");
-
     m_width_new_points = r_new_p.Width;
 
     // Determine width of overall points column
     core::dimension2du r_all_p = m_font->getDimension(L"999");
-    //m_font->setMonospaceDigits(false);
-
     m_width_all_points = r_all_p.Width;
+
+    // Cap the name column so the finish time never collides with the right-hand
+    // post-race info (Highscores / Laps / Difficulty) starting at 0.65 * width.
+    const int left_table_right =
+        (int)(UserConfigParams::m_width * 0.65f) - (int)m_width_column_space * 2;
+    int prefix_w = (int)m_width_icon + (int)m_width_column_space;
+    if (RaceManager::get()->getMinorMode() != RaceManager::MINOR_MODE_FREE_FOR_ALL &&
+        RaceManager::get()->getNumberOfKarts() >= 10)
+    {
+        prefix_w += 48;
+    }
+    if (m_has_any_avatar)
+        prefix_w += (int)m_width_icon + (int)m_width_column_space;
+
+    int suffix_w = (int)m_width_column_space;
+    if (!RaceManager::get()->isFollowMode())
+        suffix_w += (int)m_width_finish_time + (int)m_width_column_space;
+    if (active_gp)
+        suffix_w += (int)m_width_new_points + (int)m_width_all_points
+            + 2 * (int)m_width_column_space;
+
+    const int max_name_width =
+        left_table_right - (int)m_leftmost_column - prefix_w - suffix_w;
+    if (max_name_width > 0 && (int)m_width_kart_name > max_name_width)
+        m_width_kart_name = (unsigned int)max_name_width;
 
     m_table_width = m_width_icon + m_width_column_space + m_width_kart_name;
     if (m_has_any_avatar)
@@ -1181,8 +1283,8 @@ void RaceResultGUI::determineTableLayout()
         m_table_width += m_width_new_points + m_width_all_points
             + 2 * m_width_column_space;
 
-    m_leftmost_column = table_area->m_x;
-}   // determineTableLayout
+    m_last_avatar_version = DiscordAvatarManager::get()->getVersion();
+}   // recomputeColumnWidths
 
 //-----------------------------------------------------------------------------
 /** This function is called when one of the player presses 'fire'. The next
@@ -1269,6 +1371,8 @@ void RaceResultGUI::renderGlobal(float dt)
 #ifndef SERVER_ONLY
     m_timer += dt;
     assert(World::getWorld()->getPhase() == WorldStatus::RESULT_DISPLAY_PHASE);
+    if (DiscordAvatarManager::get()->getVersion() != m_last_avatar_version)
+        recomputeColumnWidths();
     unsigned int num_karts = (unsigned int)m_all_row_infos.size();
     float time_overall_scroll = m_time_overall_scroll;
     // TODO after 1.5: Avoid the point increase being too slow for low point amounts
@@ -1643,10 +1747,12 @@ void RaceResultGUI::displayOneEntry(unsigned int x, unsigned int y,
 
     // Draw the name
     // -------------
-
+    core::stringw display_name =
+        fitTextToWidth(m_font, ri->m_kart_name, (int)m_width_kart_name);
+    const int name_clip_h = std::max((int)m_distance_between_rows, getFontHeight() + 4);
     core::recti pos_name(current_x, y,
-        current_x + m_width_kart_name, y + m_distance_between_rows);
-    m_font->draw(ri->m_kart_name, pos_name, color, false, false, NULL,
+        current_x + m_width_kart_name, y + name_clip_h);
+    m_font->draw(display_name, pos_name, color, false, false, &pos_name,
         true /* ignoreRTL */);
     current_x += m_width_kart_name + m_width_column_space;
 
@@ -2107,33 +2213,55 @@ int RaceResultGUI::displayHighscores(int x, int y, bool increase_density)
     video::SColor white_color = video::SColor(255, 255, 255, 255);
     int current_y = y;
     int time_precision = RaceManager::get()->currentModeTimePrecision();
+    gui::ScalableFont* small_font = GUIEngine::getSmallFont();
+
+    GUIEngine::Widget* table_area = getWidget("result-table");
+    const int right_edge = table_area
+        ? (table_area->m_x + table_area->m_w)
+        : (int)(UserConfigParams::m_width * 0.95f);
 
     // First draw title
     GUIEngine::getFont()->draw(_("Highscores"),
-        // 0.96 from stkgui
-        core::recti(x, y, UserConfigParams::m_width * 0.96f, y + GUIEngine::getFontHeight()),
+        core::recti(x, y, right_edge, y + GUIEngine::getFontHeight()),
         white_color, false, false, NULL, true /* ignoreRTL */);
+
+    int width_icon_adjusted = increase_density ? (int)(m_width_icon * 0.8f) : (int)m_width_icon;
+    const int small_font_height = (int)small_font->getDimension(L"Ay").Height + 4;
+    const int row_clip_height = std::max(width_icon_adjusted, small_font_height);
+
+    // Precompute formatted highscore times so they align cleanly against the
+    // right edge and leave maximum room for Discord usernames.
+    const int num_entries = scores->getNumberEntries();
+    int max_time_width = 0;
+    std::vector<core::stringw> time_strings(num_entries);
+    for (int i = 0; i < num_entries; i++)
+    {
+        std::string tmp_kart;
+        irr::core::stringw tmp_player;
+        float entry_time = 0.0f;
+        scores->getEntry(i, tmp_kart, tmp_player, &entry_time);
+
+        std::string highscore_string;
+        if (RaceManager::get()->isLapTrialMode())
+            highscore_string = std::to_string(static_cast<int>(entry_time));
+        else
+            highscore_string = StringUtils::timeToString(entry_time, time_precision);
+        time_strings[i] = highscore_string.c_str();
+
+        int w = (int)small_font->getDimension(time_strings[i].c_str()).Width;
+        if (w > max_time_width)
+            max_time_width = w;
+    }
+
+    const int time_x = std::max(x + width_icon_adjusted + (int)m_width_column_space * 2,
+                                right_edge - max_time_width);
 
     std::string kart_name;
     irr::core::stringw player_name;
-
-    // prevent excessive long name
-    unsigned int max_characters = 15;
-    unsigned int max_width = (UserConfigParams::m_width / 2 - 200) / 10;
-    if (max_width < 15)
-        max_characters = max_width;
-
-    int width_icon_adjusted = increase_density ? m_width_icon * 0.8f : m_width_icon;
-
     float time;
-    for (int i = 0; i < scores->getNumberEntries(); i++)
+    for (int i = 0; i < num_entries; i++)
     {
         scores->getEntry(i, kart_name, player_name, &time);
-        if (player_name.size() > max_characters)
-        {
-            int begin = (int(m_timer / 0.4f)) % (player_name.size() - max_characters);
-            player_name = player_name.subString(begin, max_characters, false);
-        }
 
         video::SColor text_color = white_color;
         if (m_highscore_rank - 1 == i)
@@ -2167,22 +2295,22 @@ int RaceResultGUI::displayHighscores(int x, int y, bool increase_density)
             }
         }
 
-        // draw the player name
-        GUIEngine::getSmallFont()->draw(player_name.c_str(),
-            core::recti(current_x, current_y, current_x + 150, current_y + 10),
-                text_color, false, false, NULL, true /* ignoreRTL */);
-
-        current_x = (int)(UserConfigParams::m_width * 0.85f);
+        // Resolve <@discord_id> and fit player name cleanly before the time column
+        const int name_max_width = time_x - current_x - (int)m_width_column_space;
+        if (name_max_width > 0)
+        {
+            core::stringw display_name =
+                fitTextToWidth(small_font, player_name, name_max_width);
+            core::recti name_rect(current_x, current_y,
+                                  current_x + name_max_width, current_y + row_clip_height);
+            small_font->draw(display_name.c_str(), name_rect,
+                text_color, false, false, &name_rect, true /* ignoreRTL */);
+        }
 
         // Finally draw the time
-        std::string highscore_string;
-        if (RaceManager::get()->isLapTrialMode())
-            highscore_string = std::to_string(static_cast<int>(time));
-        else
-            highscore_string = StringUtils::timeToString(time, time_precision);
-        GUIEngine::getSmallFont()->draw(highscore_string.c_str(),
-            core::recti(current_x, current_y, current_x + 100, current_y + 10),
-                text_color, false, false, NULL, true /* ignoreRTL */);
+        core::recti time_rect(time_x, current_y, right_edge, current_y + row_clip_height);
+        small_font->draw(time_strings[i].c_str(), time_rect,
+            text_color, false, false, NULL, true /* ignoreRTL */);
     } // for highscore entries
 
     return current_y;
@@ -2562,6 +2690,17 @@ int RaceResultGUI::getFontHeight() const
 void RaceResultGUI::onResize()
 {
     Screen::onResize();
+    recomputeColumnWidths();
+    for (unsigned int i = 0; i < m_all_row_infos.size(); i++)
+    {
+        RowInfo *ri = &(m_all_row_infos[i]);
+        ri->m_y_pos = (float)(m_top + i * m_distance_between_rows);
+        if (m_animation_state == RR_WAIT_TILL_END ||
+            m_animation_state == RR_WAITING_GP_RESULT)
+        {
+            ri->m_x_pos = (float)m_leftmost_column;
+        }
+    }
     if (!m_gp_progress_widgets.empty())
         enableGPProgress();
 } // onResize
