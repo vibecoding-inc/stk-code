@@ -429,12 +429,19 @@ bool ReplayRecorder::writeReplayFile(bool full_path, float* out_min_time)
                 StringUtils::xmlEncode(kart->getController()->getName()).c_str());
 
         float kart_color = 0.0f;
-        if (auto npp = RaceManager::get()->getKartInfo(real_karts)
-                .getNetworkPlayerProfile().lock())
+        bool has_npp_color = false;
+        int global_player_id = RaceManager::get()->getKartGlobalPlayerId(real_karts);
+        if (global_player_id >= 0 &&
+            (unsigned int)global_player_id < RaceManager::get()->getNumPlayers())
         {
-            kart_color = npp->getDefaultKartColor();
+            if (auto npp = RaceManager::get()->getKartInfo((unsigned int)global_player_id)
+                    .getNetworkPlayerProfile().lock())
+            {
+                kart_color = npp->getDefaultKartColor();
+                has_npp_color = true;
+            }
         }
-        else if (kart->getController()->isPlayerController())
+        if (!has_npp_color && kart->getController()->isPlayerController())
         {
             if (StateManager::get()->getActivePlayer(player_count) &&
                 StateManager::get()->getActivePlayer(player_count)->getConstProfile())

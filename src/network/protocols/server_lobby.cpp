@@ -2475,14 +2475,20 @@ void ServerLobby::emitGatewayMatchResult()
         bool is_ai = true;
         int peer_port = -1;
 
-        if (auto npp = RaceManager::get()->getKartInfo(k).getNetworkPlayerProfile().lock())
+        int global_player_id = RaceManager::get()->getKartGlobalPlayerId(k);
+        if (global_player_id >= 0 &&
+            (unsigned int)global_player_id < RaceManager::get()->getNumPlayers())
         {
-            kart_color = npp->getDefaultKartColor();
-            if (auto peer = npp->getPeer())
+            if (auto npp = RaceManager::get()->getKartInfo((unsigned int)global_player_id)
+                    .getNetworkPlayerProfile().lock())
             {
-                is_ai = peer->isAIPeer();
-                if (!is_ai)
-                    peer_port = (int)peer->getAddress().getPort();
+                kart_color = npp->getDefaultKartColor();
+                if (auto peer = npp->getPeer())
+                {
+                    is_ai = peer->isAIPeer();
+                    if (!is_ai)
+                        peer_port = (int)peer->getAddress().getPort();
+                }
             }
         }
 
