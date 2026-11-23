@@ -9,6 +9,7 @@ import { handleTelemetry } from "./telemetry.mjs";
 import { handleShareAttachment } from "./share-attachment.mjs";
 import { handleInteractions } from "./interactions.mjs";
 import { handleTimeTrials } from "./time-trials.mjs";
+import { handleMatches } from "./matches.mjs";
 
 export default {
   async fetch(request, env, ctx) {
@@ -27,6 +28,10 @@ export default {
 
     if (url.pathname.startsWith("/api/timetrials/")) {
       return handleTimeTrials({request, env, ctx});
+    }
+
+    if (url.pathname === "/api/matches" || url.pathname.startsWith("/api/matches/")) {
+      return handleMatches({request, env, ctx});
     }
 
     if (url.pathname === "/api/share-attachment") {
